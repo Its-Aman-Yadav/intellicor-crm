@@ -22,18 +22,18 @@ export interface FirebaseConfig {
 }
 
 export const DEFAULT_FIREBASE_CONFIG: FirebaseConfig = {
-  apiKey: '',
-  authDomain: 'intellicor-crm.firebaseapp.com',
-  projectId: 'intellicor-crm',
-  storageBucket: 'intellicor-crm.firebasestorage.app',
-  messagingSenderId: '268193386935',
-  appId: '1:268193386935:web:7b7ef46157233a24a45832',
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || '',
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || '',
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || '',
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || '',
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || '',
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || '',
 };
 
 const FIREBASE_CONFIG_STORAGE_KEY = 'intellicor_firebase_config_v1';
 
 export function getStoredFirebaseConfig(): FirebaseConfig {
-  // 1. Check user override in localStorage
+  // 1. Check user override in localStorage (if rep entered keys in Settings modal)
   if (typeof window !== 'undefined') {
     try {
       const raw = localStorage.getItem(FIREBASE_CONFIG_STORAGE_KEY);
@@ -44,29 +44,14 @@ export function getStoredFirebaseConfig(): FirebaseConfig {
   }
 
   // 2. Check environment variables
-  if (
-    process.env.NEXT_PUBLIC_FIREBASE_API_KEY &&
-    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID
-  ) {
-    return {
-      apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-      authDomain:
-        process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ||
-        'intellicor-crm.firebaseapp.com',
-      projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-      storageBucket:
-        process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
-        'intellicor-crm.firebasestorage.app',
-      messagingSenderId:
-        process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || '268193386935',
-      appId:
-        process.env.NEXT_PUBLIC_FIREBASE_APP_ID ||
-        '1:268193386935:web:7b7ef46157233a24a45832',
-    };
-  }
-
-  // 3. Built-in configuration from project
-  return DEFAULT_FIREBASE_CONFIG;
+  return {
+    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || '',
+    authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || '',
+    projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || '',
+    storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || '',
+    messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || '',
+    appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || '',
+  };
 }
 
 export function saveStoredFirebaseConfig(config: FirebaseConfig): void {
