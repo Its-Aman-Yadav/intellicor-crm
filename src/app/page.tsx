@@ -61,6 +61,7 @@ export default function CRMApp() {
   // Cloud Firestore database connection state
   const [isFirestoreConnected, setIsFirestoreConnected] = useState(false);
   const [isFirebaseSettingsOpen, setIsFirebaseSettingsOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   // Modal states
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
@@ -317,7 +318,7 @@ export default function CRMApp() {
 
   return (
     <div className="crm-app-shell">
-      {/* PROFESSIONAL LEFT-HAND SIDEBAR */}
+      {/* PROFESSIONAL LEFT-HAND SIDEBAR (FIXED & ALWAYS SHOWN) */}
       <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -331,10 +332,12 @@ export default function CRMApp() {
         totalLeadsCount={leads.length}
         isFirestoreConnected={isFirestoreConnected}
         onOpenFirebaseSettings={() => setIsFirebaseSettingsOpen(true)}
+        isCollapsed={isSidebarCollapsed}
+        onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
       />
 
-      {/* MAIN VIEWPORT */}
-      <div className="crm-main-viewport">
+      {/* MAIN VIEWPORT (PINNED TO OFFSET FIXED SIDEBAR) */}
+      <div className={`crm-main-viewport ${isSidebarCollapsed ? 'is-collapsed' : ''}`}>
         <main className="crm-main-content-area">
           {/* Hidden file input for CSV import */}
           <input
@@ -499,10 +502,19 @@ export default function CRMApp() {
         .crm-main-viewport {
           flex: 1;
           min-width: 0;
+          margin-left: 260px;
+          width: calc(100% - 260px);
           display: flex;
           flex-direction: column;
+          min-height: 100vh;
           overflow-x: hidden;
           background: var(--bg-main);
+          transition: margin-left 0.22s cubic-bezier(0.4, 0, 0.2, 1),
+            width 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .crm-main-viewport.is-collapsed {
+          margin-left: 72px;
+          width: calc(100% - 72px);
         }
         .crm-main-content-area {
           max-width: 1440px;
@@ -555,9 +567,10 @@ export default function CRMApp() {
           align-items: center;
           gap: 0.5rem;
         }
-        @media (max-width: 1024px) {
-          .crm-app-shell {
-            display: block;
+        @media (max-width: 640px) {
+          .crm-main-viewport {
+            margin-left: 68px;
+            width: calc(100% - 68px);
           }
           .crm-main-content-area {
             padding: 1rem 0.75rem 4rem;
