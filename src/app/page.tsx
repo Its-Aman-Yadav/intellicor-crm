@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import Header from '@/components/common/Header';
+import Sidebar from '@/components/common/Sidebar';
 import DailyDashboard from '@/components/dashboard/DailyDashboard';
 import LeadTable from '@/components/leads/LeadTable';
 import LeadKanban from '@/components/leads/LeadKanban';
@@ -316,18 +316,9 @@ export default function CRMApp() {
   }
 
   return (
-    <div className="app-layout">
-      {/* Hidden file input for CSV import */}
-      <input
-        type="file"
-        ref={fileInputRef}
-        onChange={handleFileChange}
-        accept=".csv"
-        style={{ display: 'none' }}
-      />
-
-      {/* Main Top Navigation Header */}
-      <Header
+    <div className="crm-app-shell">
+      {/* PROFESSIONAL LEFT-HAND SIDEBAR */}
+      <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         activeRep={activeRep}
@@ -342,96 +333,107 @@ export default function CRMApp() {
         onOpenFirebaseSettings={() => setIsFirebaseSettingsOpen(true)}
       />
 
-      {/* Page Content Container */}
-      <main className="container-crm main-content-wrapper">
-        {/* SUB-BAR for Pipeline view mode and quick actions */}
-        {activeTab === 'pipeline' && (
-          <div className="pipeline-top-bar">
-            <div className="pipeline-mode-toggle">
-              <button
-                onClick={() => setPipelineViewMode('table')}
-                className={`mode-btn ${
-                  pipelineViewMode === 'table' ? 'active' : ''
-                }`}
-              >
-                <LayoutList size={15} />
-                <span>Table View</span>
-              </button>
-              <button
-                onClick={() => setPipelineViewMode('kanban')}
-                className={`mode-btn ${
-                  pipelineViewMode === 'kanban' ? 'active' : ''
-                }`}
-              >
-                <Columns size={15} />
-                <span>Kanban Board</span>
-              </button>
-            </div>
-
-            <div className="pipeline-quick-actions">
-              <button
-                onClick={handleImportCSVClick}
-                className="btn btn-secondary btn-sm"
-                title="Import Leads from CSV"
-              >
-                <Upload size={13} />
-                <span>Import CSV</span>
-              </button>
-              <button
-                onClick={handleResetData}
-                className="btn btn-secondary btn-sm"
-                title="Reset sample leads"
-              >
-                <RotateCcw size={13} />
-                <span>Reset Demo Data</span>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Tab View 1: Today's Daily Dashboard */}
-        {activeTab === 'dashboard' && (
-          <DailyDashboard
-            leads={leads}
-            activeRep={activeRep}
-            onOpenLead={handleOpenLead}
-            onQuickCall={handleQuickCall}
-            onOpenNewLead={handleOpenNewLead}
-            templates={templates}
-            selectedDate={selectedDate}
-            setSelectedDate={setSelectedDate}
+      {/* MAIN VIEWPORT */}
+      <div className="crm-main-viewport">
+        <main className="crm-main-content-area">
+          {/* Hidden file input for CSV import */}
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileChange}
+            accept=".csv"
+            style={{ display: 'none' }}
           />
-        )}
 
-        {/* Tab View 2: Leads & Pipeline View */}
-        {activeTab === 'pipeline' && (
-          <>
-            {pipelineViewMode === 'table' ? (
-              <LeadTable
-                leads={leads}
-                onOpenLead={handleOpenLead}
-                onQuickCall={handleQuickCall}
-                onDeleteLead={handleDeleteLead}
-                onUpdateStatus={handleUpdateStatus}
-                activeRep={activeRep}
-              />
-            ) : (
-              <LeadKanban
-                leads={leads}
-                onOpenLead={handleOpenLead}
-                onQuickCall={handleQuickCall}
-                onUpdateStatus={handleUpdateStatus}
-                activeRep={activeRep}
-              />
-            )}
-          </>
-        )}
+          {/* SUB-BAR for Pipeline view mode and quick actions */}
+          {activeTab === 'pipeline' && (
+            <div className="pipeline-top-bar">
+              <div className="pipeline-mode-toggle">
+                <button
+                  onClick={() => setPipelineViewMode('table')}
+                  className={`mode-btn ${
+                    pipelineViewMode === 'table' ? 'active' : ''
+                  }`}
+                >
+                  <LayoutList size={15} />
+                  <span>Table View</span>
+                </button>
+                <button
+                  onClick={() => setPipelineViewMode('kanban')}
+                  className={`mode-btn ${
+                    pipelineViewMode === 'kanban' ? 'active' : ''
+                  }`}
+                >
+                  <Columns size={15} />
+                  <span>Kanban Board</span>
+                </button>
+              </div>
 
-        {/* Tab View 3: 7-Day Performance Analytics */}
-        {activeTab === 'analytics' && (
-          <ReportingView leads={leads} activeRep={activeRep} />
-        )}
-      </main>
+              <div className="pipeline-quick-actions">
+                <button
+                  onClick={handleImportCSVClick}
+                  className="btn btn-secondary btn-sm"
+                  title="Import Leads from CSV"
+                >
+                  <Upload size={13} />
+                  <span>Import CSV</span>
+                </button>
+                <button
+                  onClick={handleResetData}
+                  className="btn btn-secondary btn-sm"
+                  title="Reset sample leads"
+                >
+                  <RotateCcw size={13} />
+                  <span>Reset Demo Data</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Tab View 1: Today's Daily Dashboard */}
+          {activeTab === 'dashboard' && (
+            <DailyDashboard
+              leads={leads}
+              activeRep={activeRep}
+              onOpenLead={handleOpenLead}
+              onQuickCall={handleQuickCall}
+              onOpenNewLead={handleOpenNewLead}
+              templates={templates}
+              selectedDate={selectedDate}
+              setSelectedDate={setSelectedDate}
+            />
+          )}
+
+          {/* Tab View 2: Leads & Pipeline View */}
+          {activeTab === 'pipeline' && (
+            <>
+              {pipelineViewMode === 'table' ? (
+                <LeadTable
+                  leads={leads}
+                  onOpenLead={handleOpenLead}
+                  onQuickCall={handleQuickCall}
+                  onDeleteLead={handleDeleteLead}
+                  onUpdateStatus={handleUpdateStatus}
+                  activeRep={activeRep}
+                />
+              ) : (
+                <LeadKanban
+                  leads={leads}
+                  onOpenLead={handleOpenLead}
+                  onQuickCall={handleQuickCall}
+                  onUpdateStatus={handleUpdateStatus}
+                  activeRep={activeRep}
+                />
+              )}
+            </>
+          )}
+
+          {/* Tab View 3: 7-Day Performance Analytics */}
+          {activeTab === 'analytics' && (
+            <ReportingView leads={leads} activeRep={activeRep} />
+          )}
+        </main>
+      </div>
 
       {/* MODAL 1: Full Lead View & Edit Modal */}
       <LeadModal
@@ -460,7 +462,7 @@ export default function CRMApp() {
         />
       )}
 
-      {/* MODAL 3: WhatsApp Templates Editor */}
+      {/* MODAL 3: WhatsApp Templates Customizer */}
       <TemplatesModal
         isOpen={isTemplatesOpen}
         onClose={() => setIsTemplatesOpen(false)}
@@ -487,21 +489,33 @@ export default function CRMApp() {
       />
 
       <style jsx>{`
-        .app-layout {
+        .crm-app-shell {
+          display: flex;
           min-height: 100vh;
+          width: 100%;
+          background: var(--bg-main);
+          position: relative;
+        }
+        .crm-main-viewport {
+          flex: 1;
+          min-width: 0;
           display: flex;
           flex-direction: column;
+          overflow-x: hidden;
           background: var(--bg-main);
         }
-        .main-content-wrapper {
-          padding-top: 1.5rem;
+        .crm-main-content-area {
+          max-width: 1440px;
+          width: 100%;
+          margin: 0 auto;
+          padding: 1.5rem 2rem 3rem;
           flex: 1;
         }
         .pipeline-top-bar {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          margin-bottom: 1rem;
+          margin-bottom: 1.25rem;
           flex-wrap: wrap;
           gap: 0.75rem;
         }
@@ -512,6 +526,7 @@ export default function CRMApp() {
           border-radius: var(--radius-sm);
           padding: 0.2rem;
           gap: 0.2rem;
+          box-shadow: var(--shadow-xs);
         }
         .mode-btn {
           display: flex;
@@ -539,6 +554,14 @@ export default function CRMApp() {
           display: flex;
           align-items: center;
           gap: 0.5rem;
+        }
+        @media (max-width: 1024px) {
+          .crm-app-shell {
+            display: block;
+          }
+          .crm-main-content-area {
+            padding: 1rem 0.75rem 4rem;
+          }
         }
       `}</style>
     </div>
