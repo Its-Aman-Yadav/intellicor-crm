@@ -88,6 +88,7 @@ export interface CallLog {
   openerScript: CallOpenerScript;
   result: CallResult;
   objection?: CommonObjection;
+  objections?: string[]; // multi-select objection tags
   askedForWhatsApp: boolean;
   notes: string;
   nextFollowUpDate?: string;
@@ -168,4 +169,35 @@ export interface DailyTargets {
   whatsappSentTarget: number; // 8 (5-10 range)
   demosSentTarget: number; // 3 (2-5 range)
   discoveryCallsTarget: number; // 2 (1-2 range)
+}
+
+// In-Call Script Assistant Config Types
+export interface ObjectionItem {
+  id: string;
+  objection: string;
+  reply: string;
+  category?: string;
+}
+
+export interface CallStageItem {
+  id: string;
+  stageName: string;
+  description: string;
+  suggestedPrompt?: string;
+}
+
+export interface QualificationPrompt {
+  id: string;
+  question: string;
+  mapsTo: 'notes' | 'requirement';
+  headerPrefix: string;
+  hint: string;
+}
+
+export interface CallScriptConfig {
+  openingScript: string;
+  stages: CallStageItem[];
+  objections: ObjectionItem[];
+  counterQuestions: string[];
+  qualificationPrompts: QualificationPrompt[];
 }

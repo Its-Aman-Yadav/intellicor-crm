@@ -6,7 +6,7 @@ import DailyDashboard from '@/components/dashboard/DailyDashboard';
 import LeadTable from '@/components/leads/LeadTable';
 import LeadKanban from '@/components/leads/LeadKanban';
 import LeadModal from '@/components/leads/LeadModal';
-import QuickCallModal from '@/components/leads/QuickCallModal';
+import InCallAssistantModal from '@/components/leads/InCallAssistantModal';
 import ReportingView from '@/components/analytics/ReportingView';
 import TemplatesModal from '@/components/templates/TemplatesModal';
 import BulkPasteModal from '@/components/leads/BulkPasteModal';
@@ -177,9 +177,15 @@ export default function CRMApp() {
       openerScript: CallOpenerScript;
       result: CallResult;
       objection?: CommonObjection;
+      objections?: string[];
       askedForWhatsApp: boolean;
       notes: string;
       nextFollowUpDate?: string;
+    },
+    leadUpdates?: {
+      requirement?: string;
+      notes?: string;
+      followUpDate?: string;
     }
   ) => {
     const newCallEntry = {
@@ -207,7 +213,18 @@ export default function CRMApp() {
         call1Date: lead.call1Date || new Date().toISOString().slice(0, 10),
         callResult: log.result,
         status: newStatus,
-        followUpDate: log.nextFollowUpDate || lead.followUpDate,
+        requirement:
+          leadUpdates?.requirement !== undefined
+            ? leadUpdates.requirement
+            : lead.requirement,
+        notes:
+          leadUpdates?.notes !== undefined
+            ? leadUpdates.notes
+            : log.notes || lead.notes,
+        followUpDate:
+          log.nextFollowUpDate ||
+          leadUpdates?.followUpDate ||
+          lead.followUpDate,
         whatsappSent: log.askedForWhatsApp ? true : lead.whatsappSent,
         whatsappSentDate: log.askedForWhatsApp
           ? new Date().toISOString().slice(0, 10)
@@ -452,9 +469,9 @@ export default function CRMApp() {
         activeRep={activeRep}
       />
 
-      {/* MODAL 2: Quick Call Log Dialog */}
+      {/* MODAL 2: In-Call Script Assistant Side Panel / Modal */}
       {callingLead && (
-        <QuickCallModal
+        <InCallAssistantModal
           lead={callingLead}
           activeRep={activeRep}
           onClose={() => {

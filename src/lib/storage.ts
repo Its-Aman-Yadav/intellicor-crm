@@ -1,10 +1,12 @@
-import { Lead, CallLog, WhatsAppTemplate, ScoringSignals } from '@/types/crm';
+import { Lead, CallLog, WhatsAppTemplate, ScoringSignals, CallScriptConfig } from '@/types/crm';
 import { INITIAL_LEADS } from '@/data/seedData';
 import { DEFAULT_WHATSAPP_TEMPLATES } from './whatsapp';
+import { DEFAULT_CALL_SCRIPT_CONFIG } from '@/data/callScripts';
 import { calculateLeadScore, determineLeadPriority } from './scoring';
 
 const LEADS_STORAGE_KEY = 'intellicor_crm_leads_v1';
 const TEMPLATES_STORAGE_KEY = 'intellicor_crm_templates_v1';
+const CALL_SCRIPTS_STORAGE_KEY = 'intellicor_crm_call_scripts_v1';
 const ACTIVE_REP_KEY = 'intellicor_crm_active_rep_v1';
 
 export function getStoredActiveRep(): string {
@@ -64,12 +66,42 @@ export function saveStoredTemplates(templates: WhatsAppTemplate[]): void {
   localStorage.setItem(TEMPLATES_STORAGE_KEY, JSON.stringify(templates));
 }
 
+export function getStoredCallScripts(): CallScriptConfig {
+  if (typeof window === 'undefined') return DEFAULT_CALL_SCRIPT_CONFIG;
+  try {
+    const raw = localStorage.getItem(CALL_SCRIPTS_STORAGE_KEY);
+    if (!raw) {
+      localStorage.setItem(
+        CALL_SCRIPTS_STORAGE_KEY,
+        JSON.stringify(DEFAULT_CALL_SCRIPT_CONFIG)
+      );
+      return DEFAULT_CALL_SCRIPT_CONFIG;
+    }
+    return JSON.parse(raw);
+  } catch {
+    return DEFAULT_CALL_SCRIPT_CONFIG;
+  }
+}
+
+export function saveStoredCallScripts(config: CallScriptConfig): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(CALL_SCRIPTS_STORAGE_KEY, JSON.stringify(config));
+  } catch (err) {
+    console.error('Failed to save call scripts to localStorage', err);
+  }
+}
+
 export function resetToSeedData(): Lead[] {
   if (typeof window === 'undefined') return INITIAL_LEADS;
   localStorage.setItem(LEADS_STORAGE_KEY, JSON.stringify(INITIAL_LEADS));
   localStorage.setItem(
     TEMPLATES_STORAGE_KEY,
     JSON.stringify(DEFAULT_WHATSAPP_TEMPLATES)
+  );
+  localStorage.setItem(
+    CALL_SCRIPTS_STORAGE_KEY,
+    JSON.stringify(DEFAULT_CALL_SCRIPT_CONFIG)
   );
   return INITIAL_LEADS;
 }
