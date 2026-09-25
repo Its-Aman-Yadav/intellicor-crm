@@ -60,6 +60,11 @@ import {
   Clock,
   Send,
   Zap,
+  Flame,
+  Trophy,
+  Target,
+  Download,
+  Calendar,
 } from 'lucide-react';
 
 export default function CRMApp() {
@@ -245,6 +250,7 @@ export default function CRMApp() {
       followUpTime?: string;
       brochureSent?: boolean;
       brochureSentDate?: string;
+      dealValue?: number;
     }
   ) => {
     const newCallEntry: CallLog = {
@@ -269,7 +275,9 @@ export default function CRMApp() {
       const updatedLogs = [newCallEntry, ...(lead.callLogs || [])];
       let newStatus = lead.status;
 
-      if (log.result === 'Interested') {
+      if (log.result === 'Deal Won') {
+        newStatus = 'Won';
+      } else if (log.result === 'Interested') {
         newStatus = 'Interested';
       } else if (log.result === 'Not Interested') {
         newStatus = 'Lost';
@@ -319,6 +327,10 @@ export default function CRMApp() {
           log.askedForWhatsApp || isBrochureSent
             ? new Date().toISOString().slice(0, 10)
             : lead.whatsappSentDate,
+        dealValue:
+          leadUpdates?.dealValue !== undefined
+            ? leadUpdates.dealValue
+            : lead.dealValue,
         updatedAt: new Date().toISOString(),
       };
     });
@@ -401,6 +413,8 @@ export default function CRMApp() {
     if (activeRep !== 'All' && activeRep !== 'All Reps') {
       repLeads = leads.filter((l) => l.assignedRep === activeRep);
     }
+    const todayStr = new Date().toISOString().slice(0, 10);
+
     const inQueue = repLeads.filter(
       (l) =>
         l.status === 'New' ||
@@ -409,13 +423,46 @@ export default function CRMApp() {
         l.callResult === 'Call Back Later' ||
         l.callResult === 'Callback'
     ).length;
+
+    const dueToday = repLeads.filter(
+      (l) => l.followUpDate && l.followUpDate <= todayStr && l.status !== 'Won' && l.callResult !== 'Deal Won'
+    ).length;
+
     const dueTomorrow = repLeads.filter((l) => l.followUpDate === tomorrowStr).length;
     const brochuresSent = repLeads.filter((l) => !!l.brochureSent).length;
     const interested = repLeads.filter(
       (l) => l.status === 'Interested' || l.callResult === 'Interested'
     ).length;
 
-    return { inQueue, dueTomorrow, brochuresSent, interested };
+    const wonLeads = repLeads.filter(
+      (l) => l.status === 'Won' || l.callResult === 'Deal Won'
+    );
+    const wonRevenue = wonLeads.reduce(
+      (acc, l) => acc + (l.dealValue || l.expectedValue || 0),
+      0
+    );
+
+    let todayCallsCount = 0;
+    repLeads.forEach((l) => {
+      if (l.callLogs && l.callLogs.length > 0) {
+        l.callLogs.forEach((log) => {
+          if (log.date && log.date.slice(0, 10) === todayStr) {
+            todayCallsCount++;
+          }
+        });
+      }
+    });
+
+    return {
+      inQueue,
+      dueToday,
+      dueTomorrow,
+      brochuresSent,
+      interested,
+      wonDeals: wonLeads.length,
+      wonRevenue,
+      todayCallsCount,
+    };
   }, [leads, activeRep, tomorrowStr]);
 
   if (!isClient) {
@@ -507,6 +554,15 @@ export default function CRMApp() {
             <div className="header-right-actions">
               {/* Quick Metrics */}
               <div className="header-stats-pills">
+                <div
+                  className={`header-stat-pill ${stats.dueToday > 0 ? 'alert-pill' : ''}`}
+                  title="Follow-ups due today or overdue (Click to view)"
+                  onClick={() => setSimpleTab('leads')}
+                  style={{ cursor: 'pointer' }}
+                >
+                  <Flame size={13} className={stats.dueToday > 0 ? 'text-red' : 'text-amber'} />
+                  <span>Today: <strong>{stats.dueToday}</strong></span>
+                </div>
                 <div className="header-stat-pill" title="Due for follow-up tomorrow">
                   <Clock size={13} className="text-amber" />
                   <span>Tomorrow: <strong>{stats.dueTomorrow}</strong></span>
@@ -515,9 +571,17 @@ export default function CRMApp() {
                   <Send size={13} className="text-green" />
                   <span>Brochures: <strong>{stats.brochuresSent}</strong></span>
                 </div>
+                <div className="header-stat-pill target-pill" title="Calls made today towards daily solo target (50)">
+                  <Target size={13} className="text-blue" />
+                  <span>Calls: <strong>{stats.todayCallsCount}</strong>/50</span>
+                </div>
+                {stats.wonDeals > 0 && (
+                  <div className="header-stat-pill won-pill" title="Closed Won Revenue">
+                    <Trophy size={13} className="text-green" />
+                    <span>Won: <strong>₹{stats.wonRevenue.toLocaleString('en-IN')}</strong> ({stats.wonDeals})</span>
+                  </div>
+                )}
               </div>
-
-
 
               {/* Upload Excel Button */}
               <button
@@ -723,6 +787,33 @@ export default function CRMApp() {
           }
           .text-slate {
             color: #64748b;
+          }
+          .text-red {
+            color: #dc2626;
+          }
+          .text-blue {
+            color: #1e50bc;
+          }
+          .header-stat-pill.alert-pill {
+            background: #fef2f2;
+            border-color: #fecaca;
+            color: #b91c1c;
+            animation: pulseSubtle 2s infinite;
+          }
+          .header-stat-pill.won-pill {
+            background: #f0fdf4;
+            border-color: #bbf7d0;
+            color: #15803d;
+            font-weight: 600;
+          }
+          .header-stat-pill.target-pill {
+            background: #eff6ff;
+            border-color: #bfdbfe;
+            color: #1e50bc;
+          }
+          @keyframes pulseSubtle {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.02); }
           }
 
           .btn-upload-excel-header {

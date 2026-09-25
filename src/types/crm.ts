@@ -31,7 +31,8 @@ export type CallResult =
   | 'Interested'
   | 'Callback'
   | 'Call Back Later'
-  | 'Wrong Number';
+  | 'Wrong Number'
+  | 'Deal Won';
 
 export type PackageName = 'Starter' | 'Growth' | 'Complete';
 
@@ -142,6 +143,7 @@ export interface Lead {
   packageRecommended?: PackageName;
   quotationStatus: QuotationStatus;
   expectedValue: number; // in ₹
+  dealValue?: number; // in ₹ when Deal Won
   notes: string;
 
   // Multi-attempt Call History

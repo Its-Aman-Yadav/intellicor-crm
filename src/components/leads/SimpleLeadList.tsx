@@ -3,6 +3,8 @@
 import React, { useState, useMemo } from 'react';
 import { Lead } from '@/types/crm';
 import { cleanPhoneNumber } from '@/lib/whatsapp';
+import { exportLeadsToExcel } from '@/lib/excelParser';
+import QuickWhatsAppModal from '@/components/common/QuickWhatsAppModal';
 import {
   Search,
   Phone,
@@ -24,6 +26,9 @@ import {
   Save,
   X,
   Check,
+  Download,
+  Flame,
+  Trophy,
 } from 'lucide-react';
 
 interface SimpleLeadListProps {
@@ -40,10 +45,12 @@ interface SimpleLeadListProps {
 
 export type TableFilterTab =
   | 'all'
+  | 'due_today'
   | 'pending'
   | 'tomorrow'
   | 'brochure_sent'
   | 'interested'
+  | 'won'
   | 'not_picked'
   | 'not_interested';
 
@@ -68,6 +75,9 @@ export default function SimpleLeadList({
   const [editingInlineId, setEditingInlineId] = useState<string | null>(null);
   const [inlineNotesText, setInlineNotesText] = useState<string>('');
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  // Quick WhatsApp Template Modal state
+  const [waModalLead, setWaModalLead] = useState<Lead | null>(null);
 
   const todayStr = new Date().toISOString().slice(0, 10);
   const tomorrow = new Date(Date.now() + 86400000);
@@ -108,6 +118,7 @@ export default function SimpleLeadList({
     if (!editingLead) return;
     const updatedLead: Lead = {
       ...editingLead,
+      status: editingLead.callResult === 'Deal Won' ? 'Won' : editingLead.status,
       updatedAt: new Date().toISOString(),
     };
     if (onUpdateLead) {
@@ -129,14 +140,25 @@ export default function SimpleLeadList({
 
   // Tab counters
   const counters = useMemo(() => {
+    let dueToday = 0;
     let pending = 0;
     let tomorrowCount = 0;
     let brochureSentCount = 0;
     let interested = 0;
+    let won = 0;
+    let wonRevenue = 0;
     let notPicked = 0;
     let notInterested = 0;
 
     repLeads.forEach((l) => {
+      const isWon = l.status === 'Won' || l.callResult === 'Deal Won';
+      if (isWon) {
+        won++;
+        wonRevenue += l.dealValue || l.expectedValue || 0;
+      }
+      if (l.followUpDate && l.followUpDate <= todayStr && !isWon) {
+        dueToday++;
+      }
       if (
         l.status === 'New' ||
         l.callResult === 'Not Picked Up' ||
@@ -165,14 +187,17 @@ export default function SimpleLeadList({
 
     return {
       all: repLeads.length,
+      due_today: dueToday,
       pending,
       tomorrow: tomorrowCount,
       brochure_sent: brochureSentCount,
       interested,
+      won,
+      wonRevenue,
       not_picked: notPicked,
       not_interested: notInterested,
     };
-  }, [repLeads, tomorrowStr]);
+  }, [repLeads, todayStr, tomorrowStr]);
 
   // Filtered leads based on tab and search
   const filteredLeads = useMemo(() => {
@@ -180,6 +205,11 @@ export default function SimpleLeadList({
 
     // Filter by Tab
     switch (activeTab) {
+      case 'due_today':
+        result = result.filter(
+          (l) => l.followUpDate && l.followUpDate <= todayStr && l.status !== 'Won' && l.callResult !== 'Deal Won'
+        );
+        break;
       case 'pending':
         result = result.filter(
           (l) =>
@@ -199,6 +229,11 @@ export default function SimpleLeadList({
       case 'interested':
         result = result.filter(
           (l) => l.status === 'Interested' || l.callResult === 'Interested'
+        );
+        break;
+      case 'won':
+        result = result.filter(
+          (l) => l.status === 'Won' || l.callResult === 'Deal Won'
         );
         break;
       case 'not_picked':
@@ -260,6 +295,17 @@ export default function SimpleLeadList({
             </button>
           )}
 
+          <button
+            type="button"
+            onClick={() => exportLeadsToExcel(filteredLeads.length > 0 ? filteredLeads : leads)}
+            disabled={leads.length === 0}
+            className="btn-banner-export"
+            title="Export all leads to formatted Excel (.xlsx)"
+          >
+            <Download size={15} />
+            <span>Export Excel</span>
+          </button>
+
           <button onClick={onOpenUploadModal} className="btn-banner-upload">
             <FileSpreadsheet size={16} />
             <span>Upload Excel</span>
@@ -284,6 +330,14 @@ export default function SimpleLeadList({
         >
           <span>All Leads</span>
           <span className="tab-badge">{counters.all}</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('due_today')}
+          className={`filter-tab ${activeTab === 'due_today' ? 'active' : ''} ${counters.due_today > 0 ? 'tab-alert' : ''}`}
+        >
+          <span>🔥 Due Today</span>
+          <span className={`tab-badge ${counters.due_today > 0 ? 'badge-red' : ''}`}>{counters.due_today}</span>
         </button>
 
         <button
@@ -316,6 +370,16 @@ export default function SimpleLeadList({
         >
           <span>🟢 Interested</span>
           <span className="tab-badge badge-green">{counters.interested}</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('won')}
+          className={`filter-tab ${activeTab === 'won' ? 'active' : ''}`}
+        >
+          <span>🏆 Won</span>
+          <span className="tab-badge badge-green">
+            {counters.won} {counters.wonRevenue > 0 ? `(₹${counters.wonRevenue.toLocaleString('en-IN')})` : ''}
+          </span>
         </button>
 
         <button
@@ -431,15 +495,14 @@ export default function SimpleLeadList({
                             >
                               <Phone size={13} />
                             </a>
-                            <a
-                              href={`https://wa.me/${rawPhone}`}
-                              target="_blank"
-                              rel="noreferrer"
+                            <button
+                              type="button"
+                              onClick={() => setWaModalLead(lead)}
                               className="phone-quick-icon wa"
-                              title="Direct WhatsApp"
+                              title="WhatsApp with 1-click quick templates"
                             >
                               <MessageCircle size={13} />
-                            </a>
+                            </button>
                           </div>
                         </div>
                       </td>
@@ -704,16 +767,15 @@ export default function SimpleLeadList({
                         <PhoneCall size={14} />
                         <span>Call</span>
                       </a>
-                      <a
-                        href={`https://wa.me/${rawPhone}`}
-                        target="_blank"
-                        rel="noreferrer"
+                      <button
+                        type="button"
+                        onClick={() => setWaModalLead(lead)}
                         className="btn-mob-action wa"
-                        title="WhatsApp"
+                        title="WhatsApp with 1-click quick templates"
                       >
                         <MessageCircle size={14} />
                         <span>WhatsApp</span>
-                      </a>
+                      </button>
                       <button
                         onClick={() => onStartCallingQueue(lead.id)}
                         className="btn-mob-action dialer"
@@ -913,22 +975,41 @@ export default function SimpleLeadList({
               <div className="edit-field">
                 <label>Last Call Outcome / Status:</label>
                 <div className="status-selection-pills">
-                  {(['New', 'Not Picked Up', 'Call Back Later', 'Interested', 'Not Interested'] as const).map((st) => (
+                  {(['New', 'Not Picked Up', 'Call Back Later', 'Interested', 'Deal Won', 'Not Interested'] as const).map((st) => (
                     <button
                       key={st}
                       type="button"
                       onClick={() => setEditingLead({
                         ...editingLead,
                         callResult: st as any,
-                        status: st === 'Interested' ? 'Interested' : st === 'Not Interested' ? 'Lost' : st === 'New' ? 'New' : 'Called',
+                        status: st === 'Deal Won' ? 'Won' : st === 'Interested' ? 'Interested' : st === 'Not Interested' ? 'Lost' : st === 'New' ? 'New' : 'Called',
                       })}
                       className={`edit-status-pill pill-${st.toLowerCase().replace(/\s+/g, '-')} ${(editingLead.callResult === st || (!editingLead.callResult && st === 'New')) ? 'active' : ''}`}
                     >
-                      {st}
+                      {st === 'Deal Won' ? '🎉 Deal Won' : st}
                     </button>
                   ))}
                 </div>
               </div>
+
+              {editingLead.callResult === 'Deal Won' && (
+                <div className="edit-field deal-won-revenue-field">
+                  <label>🎉 Deal Won Amount (₹):</label>
+                  <input
+                    type="number"
+                    value={editingLead.dealValue ?? editingLead.expectedValue ?? 15000}
+                    onChange={(e) =>
+                      setEditingLead({
+                        ...editingLead,
+                        dealValue: Number(e.target.value) || 0,
+                        expectedValue: Number(e.target.value) || 0,
+                      })
+                    }
+                    className="edit-input"
+                    placeholder="e.g. 25000"
+                  />
+                </div>
+              )}
 
               {/* Row 5: Follow-up Date & Time */}
               <div className="edit-form-grid-2">
@@ -1024,6 +1105,15 @@ export default function SimpleLeadList({
         </div>
       )}
 
+      {/* 1-Click WhatsApp Quick Templates Modal */}
+      {waModalLead && (
+        <QuickWhatsAppModal
+          lead={waModalLead}
+          onClose={() => setWaModalLead(null)}
+          onSent={() => showToast('📲 WhatsApp opened!')}
+        />
+      )}
+
       <style jsx>{`
         .simple-list-container {
           display: flex;
@@ -1057,6 +1147,28 @@ export default function SimpleLeadList({
           display: flex;
           align-items: center;
           gap: 0.75rem;
+        }
+        .btn-banner-export {
+          display: flex;
+          align-items: center;
+          gap: 0.45rem;
+          background: #ffffff;
+          border: 1.5px solid #cbd5e1;
+          color: #1e293b;
+          padding: 0.65rem 1.15rem;
+          border-radius: 9px;
+          font-size: 0.88rem;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.15s;
+        }
+        .btn-banner-export:hover:not(:disabled) {
+          background: #f8fafc;
+          border-color: #94a3b8;
+        }
+        .btn-banner-export:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
         }
         .btn-banner-upload {
           display: flex;
@@ -1156,6 +1268,16 @@ export default function SimpleLeadList({
           color: #ffffff;
           border-color: #0b1d33;
           font-weight: 600;
+        }
+        .filter-tab.tab-alert {
+          border-color: #fecaca;
+          background: #fff5f5;
+          color: #b91c1c;
+        }
+        .filter-tab.tab-alert.active {
+          background: #dc2626;
+          color: #ffffff;
+          border-color: #dc2626;
         }
         .tab-badge {
           background: #f1f5f9;
@@ -2122,9 +2244,20 @@ export default function SimpleLeadList({
           background: #16a34a;
           color: #ffffff;
         }
+        .edit-status-pill.pill-deal-won.active {
+          background: #15803d;
+          color: #ffffff;
+          box-shadow: 0 0 0 2px #86efac;
+        }
         .edit-status-pill.pill-not-interested.active {
           background: #64748b;
           color: #ffffff;
+        }
+        .deal-won-revenue-field {
+          background: #f0fdf4;
+          border: 1px solid #bbf7d0;
+          padding: 0.75rem 0.85rem;
+          border-radius: 8px;
         }
         .date-preset-group {
           display: flex;

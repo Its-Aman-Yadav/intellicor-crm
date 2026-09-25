@@ -40,7 +40,11 @@ import {
   Play,
   Pause,
   RotateCcw,
+  Trophy,
+  Flame,
+  Target,
 } from 'lucide-react';
+import QuickWhatsAppModal from '@/components/common/QuickWhatsAppModal';
 
 interface SimplePowerDialerProps {
   leads: Lead[];
@@ -63,6 +67,7 @@ interface SimplePowerDialerProps {
       followUpTime?: string;
       brochureSent?: boolean;
       brochureSentDate?: string;
+      dealValue?: number;
     }
   ) => void;
   onOpenLeadModal?: (lead: Lead) => void;
@@ -72,10 +77,12 @@ interface SimplePowerDialerProps {
 }
 
 export type QueueFilter =
+  | 'due_today'
   | 'pending'
   | 'followups_tomorrow'
   | 'not_picked_up'
   | 'interested'
+  | 'won'
   | 'all';
 
 export default function SimplePowerDialer({
@@ -101,6 +108,9 @@ export default function SimplePowerDialer({
   const [isFollowUpOpen, setIsFollowUpOpen] = useState<boolean>(false);
   const [customFollowUpDate, setCustomFollowUpDate] = useState<string>('');
   const [customFollowUpTime, setCustomFollowUpTime] = useState<string>('10:00');
+  const [isDealWonOpen, setIsDealWonOpen] = useState<boolean>(false);
+  const [dealWonAmount, setDealWonAmount] = useState<number>(25000);
+  const [isWAModalOpen, setIsWAModalOpen] = useState<boolean>(false);
   const [isCopied, setIsCopied] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -124,6 +134,10 @@ export default function SimplePowerDialer({
     }
 
     switch (queueFilter) {
+      case 'due_today':
+        return repLeads.filter(
+          (l) => l.followUpDate && l.followUpDate <= todayStr && l.status !== 'Won' && l.callResult !== 'Deal Won'
+        );
       case 'pending':
         // Leads that haven't been called yet or were marked as Not Picked Up / Callback
         return repLeads.filter(
@@ -132,8 +146,7 @@ export default function SimplePowerDialer({
             l.callResult === 'Not Picked Up' ||
             l.callResult === 'No Answer' ||
             l.callResult === 'Call Back Later' ||
-            l.callResult === 'Callback' ||
-            (l.followUpDate && l.followUpDate <= todayStr)
+            l.callResult === 'Callback'
         );
       case 'followups_tomorrow':
         return repLeads.filter((l) => l.followUpDate === tomorrowStr);
@@ -145,11 +158,28 @@ export default function SimplePowerDialer({
         return repLeads.filter(
           (l) => l.status === 'Interested' || l.callResult === 'Interested'
         );
+      case 'won':
+        return repLeads.filter(
+          (l) => l.status === 'Won' || l.callResult === 'Deal Won'
+        );
       case 'all':
       default:
         return repLeads;
     }
   }, [leads, activeRep, queueFilter, todayStr, tomorrowStr]);
+
+  // Today's total calls counter
+  const todayCallsCount = useMemo(() => {
+    let count = 0;
+    leads.forEach((l) => {
+      l.callLogs?.forEach((log) => {
+        if (log.date && log.date.slice(0, 10) === todayStr) {
+          count++;
+        }
+      });
+    });
+    return count;
+  }, [leads, todayStr]);
 
   // Set initial lead if provided
   useEffect(() => {
@@ -228,6 +258,7 @@ export default function SimplePowerDialer({
       followUpDate?: string;
       followUpTime?: string;
       autoAdvance?: boolean;
+      dealValue?: number;
     }
   ) => {
     if (!currentLead) return;
@@ -240,6 +271,7 @@ export default function SimplePowerDialer({
     const followUpDate = options?.followUpDate;
     const followUpTime = options?.followUpTime;
     const autoAdvance = options?.autoAdvance !== false; // default true
+    const dealValue = options?.dealValue;
 
     onSaveCallLog(
       currentLead.id,
@@ -259,14 +291,18 @@ export default function SimplePowerDialer({
           : currentLead.notes,
         followUpDate,
         followUpTime,
+        dealValue,
       }
     );
 
     let toastText = `✓ Logged "${result}"`;
-    if (followUpDate) {
+    if (result === 'Deal Won') {
+      toastText = `🎉 Deal Won! (₹${(dealValue || 25000).toLocaleString('en-IN')})`;
+    } else if (followUpDate) {
       toastText += ` (Follow-up: ${followUpDate} ${followUpTime || ''})`;
     }
     showToast(toastText);
+    setIsDealWonOpen(false);
 
     if (autoAdvance) {
       if (currentIndex < queueLeads.length - 1) {
@@ -411,6 +447,17 @@ export default function SimplePowerDialer({
             <Layers size={15} /> Queue:
           </span>
           <div className="queue-pills">
+            {leads.filter((l) => l.followUpDate && l.followUpDate <= todayStr && l.status !== 'Won' && l.callResult !== 'Deal Won').length > 0 && (
+              <button
+                onClick={() => {
+                  setQueueFilter('due_today');
+                  setCurrentIndex(0);
+                }}
+                className={`queue-pill pill-alert ${queueFilter === 'due_today' ? 'active' : ''}`}
+              >
+                🔥 Due Today ({leads.filter((l) => l.followUpDate && l.followUpDate <= todayStr && l.status !== 'Won' && l.callResult !== 'Deal Won').length})
+              </button>
+            )}
             <button
               onClick={() => {
                 setQueueFilter('pending');
@@ -447,6 +494,17 @@ export default function SimplePowerDialer({
             >
               Interested ({leads.filter((l) => l.status === 'Interested').length})
             </button>
+            {leads.filter((l) => l.status === 'Won' || l.callResult === 'Deal Won').length > 0 && (
+              <button
+                onClick={() => {
+                  setQueueFilter('won');
+                  setCurrentIndex(0);
+                }}
+                className={`queue-pill pill-won ${queueFilter === 'won' ? 'active' : ''}`}
+              >
+                🏆 Won ({leads.filter((l) => l.status === 'Won' || l.callResult === 'Deal Won').length})
+              </button>
+            )}
             <button
               onClick={() => {
                 setQueueFilter('all');
@@ -460,6 +518,10 @@ export default function SimplePowerDialer({
         </div>
 
         <div className="top-right-controls">
+          <div className="dialer-call-counter" title="Calls made today towards daily solo goal (50)">
+            <Target size={14} className="text-blue" />
+            <span>Today: <strong>{todayCallsCount}</strong> / 50</span>
+          </div>
           {onOpenUploadModal && (
             <button onClick={onOpenUploadModal} className="btn-upload-more">
               + Upload Excel
@@ -605,17 +667,16 @@ export default function SimplePowerDialer({
                   <span>Call Now</span>
                 </a>
 
-                {/* Direct WhatsApp Chat */}
-                <a
-                  href={`https://wa.me/${rawCleanPhone}`}
-                  target="_blank"
-                  rel="noreferrer"
+                {/* 1-Tap WhatsApp Templates & Direct Chat */}
+                <button
+                  type="button"
+                  onClick={() => setIsWAModalOpen(true)}
                   className="btn-wa-direct"
-                  title="Open direct WhatsApp chat"
+                  title="Open 1-Tap WhatsApp templates or direct chat"
                 >
                   <MessageCircle size={19} />
                   <span>WhatsApp</span>
-                </a>
+                </button>
               </div>
             </div>
 
@@ -732,6 +793,21 @@ export default function SimplePowerDialer({
                   <span className="key-shortcut-hint">Key I</span>
                 </button>
 
+                {/* 🏆 Deal Won */}
+                <button
+                  type="button"
+                  onClick={() => setIsDealWonOpen(!isDealWonOpen)}
+                  className={`outcome-btn btn-deal-won ${isDealWonOpen ? 'is-active-drop' : ''}`}
+                  title="Mark as Deal Won & Record Value"
+                >
+                  <Trophy size={22} />
+                  <div className="outcome-btn-text">
+                    <span className="outcome-primary">Deal Won! 🏆</span>
+                    <span className="outcome-hint">Closed & payment agreed</span>
+                  </div>
+                  <span className="key-shortcut-hint">Won</span>
+                </button>
+
                 {/* ⚪ Not Interested */}
                 <button
                   type="button"
@@ -747,6 +823,57 @@ export default function SimplePowerDialer({
                   <span className="key-shortcut-hint">Key X</span>
                 </button>
               </div>
+
+              {/* QUICK DEAL WON ACCORDION */}
+              {isDealWonOpen && (
+                <div className="deal-won-presets-panel">
+                  <div className="deal-won-header">
+                    <Trophy size={16} className="text-amber" />
+                    <span>🎉 Deal Won Amount (₹): (Select or enter custom amount)</span>
+                  </div>
+
+                  <div className="deal-amount-presets">
+                    {[15000, 25000, 50000, 100000].map((amt) => (
+                      <button
+                        key={amt}
+                        type="button"
+                        onClick={() =>
+                          handleRecordDisposition('Deal Won', {
+                            dealValue: amt,
+                          })
+                        }
+                        className={`deal-preset-btn ${dealWonAmount === amt ? 'active' : ''}`}
+                      >
+                        <span>{amt >= 100000 ? `₹${amt / 100000} Lakh` : `₹${amt / 1000}k`}</span>
+                        <small>₹{amt.toLocaleString('en-IN')}</small>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Custom Deal Amount */}
+                  <div className="deal-custom-row">
+                    <label>Custom ₹:</label>
+                    <input
+                      type="number"
+                      placeholder="e.g. 35000"
+                      value={dealWonAmount || ''}
+                      onChange={(e) => setDealWonAmount(Number(e.target.value) || 0)}
+                      className="deal-custom-input"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleRecordDisposition('Deal Won', {
+                          dealValue: Number(dealWonAmount) || 0,
+                        })
+                      }
+                      className="btn-confirm-deal-won"
+                    >
+                      Confirm Deal 🏆 →
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* QUICK FOLLOW-UP ACCORDION (Tomorrow Presets) */}
               {isFollowUpOpen && (
@@ -942,6 +1069,15 @@ export default function SimplePowerDialer({
         </div>
       ) : null}
 
+      {/* Quick WhatsApp Templates Modal */}
+      {isWAModalOpen && currentLead && (
+        <QuickWhatsAppModal
+          lead={currentLead}
+          onClose={() => setIsWAModalOpen(false)}
+          onSent={() => showToast('📲 WhatsApp opened!')}
+        />
+      )}
+
       <style jsx>{`
         .dialer-wrapper {
           display: flex;
@@ -1042,6 +1178,39 @@ export default function SimplePowerDialer({
           color: #ffffff;
           border-color: #1e50bc;
           font-weight: 600;
+        }
+        .queue-pill.pill-alert {
+          border-color: #fca5a5;
+          color: #dc2626;
+          background: #fef2f2;
+        }
+        .queue-pill.pill-alert.active {
+          background: #dc2626;
+          color: #ffffff;
+          border-color: #dc2626;
+        }
+        .queue-pill.pill-won {
+          border-color: #fde68a;
+          color: #b45309;
+          background: #fffbeb;
+        }
+        .queue-pill.pill-won.active {
+          background: #d97706;
+          color: #ffffff;
+          border-color: #d97706;
+        }
+        .dialer-call-counter {
+          display: flex;
+          align-items: center;
+          gap: 0.4rem;
+          background: #f0fdf4;
+          border: 1px solid #bbf7d0;
+          color: #15803d;
+          padding: 0.4rem 0.8rem;
+          border-radius: 9999px;
+          font-size: 0.82rem;
+          font-weight: 700;
+          white-space: nowrap;
         }
         .top-right-controls {
           display: flex;
@@ -1566,14 +1735,118 @@ export default function SimplePowerDialer({
           box-shadow: 0 4px 12px rgba(22, 163, 74, 0.18);
         }
 
+        .btn-deal-won {
+          background: #fefce8;
+          border-color: #fef08a;
+          color: #854d0e;
+        }
+        .btn-deal-won:hover,
+        .btn-deal-won.is-active-drop {
+          background: #fef9c3;
+          border-color: #eab308;
+          box-shadow: 0 4px 12px rgba(234, 179, 8, 0.25);
+        }
+
         .btn-not-interested {
           background: #f8fafc;
           border-color: #e2e8f0;
           color: #64748b;
+          grid-column: span 2;
         }
         .btn-not-interested:hover {
           background: #f1f5f9;
           color: #334155;
+        }
+
+        /* Deal won presets panel */
+        .deal-won-presets-panel {
+          margin-top: 1.15rem;
+          background: #fefce8;
+          border: 1.5px solid #facc15;
+          border-radius: 12px;
+          padding: 1.15rem;
+          display: flex;
+          flex-direction: column;
+          gap: 0.85rem;
+          animation: slideDown 0.2s ease;
+        }
+        .deal-won-header {
+          display: flex;
+          align-items: center;
+          gap: 0.4rem;
+          font-size: 0.85rem;
+          font-weight: 700;
+          color: #854d0e;
+        }
+        .deal-amount-presets {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 0.5rem;
+        }
+        .deal-preset-btn {
+          background: #ffffff;
+          border: 1px solid #facc15;
+          padding: 0.55rem 0.6rem;
+          border-radius: 8px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          cursor: pointer;
+          transition: all 0.15s;
+        }
+        .deal-preset-btn:hover,
+        .deal-preset-btn.active {
+          background: #fef08a;
+          border-color: #ca8a04;
+          transform: translateY(-1px);
+        }
+        .deal-preset-btn span {
+          font-size: 0.82rem;
+          font-weight: 700;
+          color: #854d0e;
+        }
+        .deal-preset-btn small {
+          font-size: 0.68rem;
+          color: #a16207;
+        }
+        .deal-custom-row {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          border-top: 1px solid #fef08a;
+          padding-top: 0.75rem;
+        }
+        .deal-custom-row label {
+          font-size: 0.75rem;
+          font-weight: 700;
+          color: #854d0e;
+          white-space: nowrap;
+        }
+        .deal-custom-input {
+          flex: 1;
+          padding: 0.4rem 0.6rem;
+          border: 1px solid #ca8a04;
+          border-radius: 6px;
+          font-size: 0.85rem;
+          background: #ffffff;
+        }
+        .btn-confirm-deal-won {
+          background: #d97706;
+          color: #ffffff;
+          border: none;
+          padding: 0.45rem 0.95rem;
+          border-radius: 6px;
+          font-size: 0.82rem;
+          font-weight: 700;
+          cursor: pointer;
+          white-space: nowrap;
+          transition: background 0.15s;
+        }
+        .btn-confirm-deal-won:hover {
+          background: #b45309;
+        }
+        .text-amber {
+          color: #d97706;
         }
 
         /* Follow-up presets panel */

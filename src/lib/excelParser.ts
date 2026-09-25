@@ -252,3 +252,65 @@ export function downloadSampleExcelTemplate(): void {
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Sample Leads');
   XLSX.writeFile(workbook, 'leads_upload_template.xlsx');
 }
+
+/**
+ * Exports all leads to a formatted .xlsx Excel spreadsheet
+ */
+export function exportLeadsToExcel(leads: Lead[], filename?: string): void {
+  if (!leads || leads.length === 0) {
+    alert('No leads to export!');
+    return;
+  }
+
+  const exportData = leads.map((l, idx) => {
+    const isWon = l.status === 'Won' || l.callResult === 'Deal Won';
+    const wonAmt = l.dealValue || (isWon ? l.expectedValue : '');
+
+    return {
+      '#': idx + 1,
+      'Business / Company Name': l.businessName || '',
+      'Owner / Contact Name': l.ownerName || '',
+      'Phone Number': l.phone || '',
+      'City': l.city || '',
+      'Industry': l.industry || '',
+      'Last Call Outcome': l.callResult || 'Not Called',
+      'Lead Status': l.status || 'New',
+      'Requirement / Notes': l.requirement || l.notes || '',
+      'Follow-up Date': l.followUpDate || '',
+      'Follow-up Time': l.followUpTime || '',
+      'Brochure Sent': l.brochureSent ? 'Yes' : 'No',
+      'Brochure Sent Date': l.brochureSentDate || '',
+      'Deal Won Amount (INR)': wonAmt,
+      'Assigned Rep': l.assignedRep || 'Aman',
+      'Created Date': l.createdAt ? l.createdAt.slice(0, 10) : '',
+      'Last Updated': l.updatedAt ? l.updatedAt.slice(0, 10) : '',
+    };
+  });
+
+  const worksheet = XLSX.utils.json_to_sheet(exportData);
+  worksheet['!cols'] = [
+    { wch: 5 },  // #
+    { wch: 28 }, // Business Name
+    { wch: 22 }, // Contact Name
+    { wch: 16 }, // Phone
+    { wch: 15 }, // City
+    { wch: 20 }, // Industry
+    { wch: 18 }, // Last Call Outcome
+    { wch: 14 }, // Lead Status
+    { wch: 38 }, // Requirement / Notes
+    { wch: 14 }, // Follow-up Date
+    { wch: 14 }, // Follow-up Time
+    { wch: 14 }, // Brochure Sent
+    { wch: 16 }, // Brochure Sent Date
+    { wch: 22 }, // Deal Won Amount
+    { wch: 15 }, // Rep
+    { wch: 14 }, // Created Date
+    { wch: 14 }, // Last Updated
+  ];
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Client Leads');
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const outName = filename || `Intellicor_Leads_${dateStr}.xlsx`;
+  XLSX.writeFile(workbook, outName);
+}
