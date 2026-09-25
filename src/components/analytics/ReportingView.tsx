@@ -102,12 +102,13 @@ export default function ReportingView({ leads, activeRep }: ReportingViewProps) 
         }
 
         // Script opener conversion
-        if (!scriptInterestedMap[log.openerScript]) {
-          scriptInterestedMap[log.openerScript] = { total: 0, interested: 0 };
+        const openerKey = log.openerScript || 'Direct GBP Audit';
+        if (!scriptInterestedMap[openerKey]) {
+          scriptInterestedMap[openerKey] = { total: 0, interested: 0 };
         }
-        scriptInterestedMap[log.openerScript].total++;
+        scriptInterestedMap[openerKey].total++;
         if (log.result === 'Interested') {
-          scriptInterestedMap[log.openerScript].interested++;
+          scriptInterestedMap[openerKey].interested++;
         }
 
         // WhatsApp ask

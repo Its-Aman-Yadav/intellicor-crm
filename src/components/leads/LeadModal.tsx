@@ -1772,6 +1772,42 @@ export default function LeadModal({
             width: 100%;
           }
         }
+
+        @media (max-width: 640px) {
+          .lead-modal-footer {
+            flex-direction: column-reverse;
+            gap: 0.5rem;
+            padding: 0.75rem 1rem;
+          }
+          .footer-right-buttons {
+            width: 100%;
+            flex-direction: column;
+            margin-left: 0;
+            gap: 0.4rem;
+          }
+          .footer-right-buttons button,
+          .delete-lead-btn {
+            width: 100%;
+            justify-content: center;
+            min-height: 44px;
+          }
+          .tabs-nav {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
+            flex-wrap: nowrap;
+            padding: 0 0.25rem;
+          }
+          .tabs-nav::-webkit-scrollbar {
+            display: none;
+          }
+          .tab-btn {
+            white-space: nowrap;
+            flex-shrink: 0;
+            padding: 0.65rem 0.75rem;
+            font-size: 0.82rem;
+          }
+        }
       `}</style>
     </div>
   );

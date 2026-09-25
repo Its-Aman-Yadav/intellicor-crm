@@ -26,9 +26,12 @@ export type LeadPriority = 'HOT' | 'WARM' | 'COLD';
 export type CallResult =
   | 'Connected'
   | 'No Answer'
+  | 'Not Picked Up'
   | 'Not Interested'
   | 'Interested'
-  | 'Callback';
+  | 'Callback'
+  | 'Call Back Later'
+  | 'Wrong Number';
 
 export type PackageName = 'Starter' | 'Growth' | 'Complete';
 
@@ -85,13 +88,15 @@ export interface CallLog {
   leadId: string;
   date: string; // ISO date-time string
   repName: string;
-  openerScript: CallOpenerScript;
-  result: CallResult;
-  objection?: CommonObjection;
+  openerScript?: CallOpenerScript | string;
+  result: CallResult | string;
+  objection?: CommonObjection | string;
   objections?: string[]; // multi-select objection tags
   askedForWhatsApp: boolean;
   notes: string;
   nextFollowUpDate?: string;
+  nextFollowUpTime?: string;
+  brochureSent?: boolean;
 }
 
 export interface ScoringSignals {
@@ -129,7 +134,10 @@ export interface Lead {
   whatsappSentDate?: string;
   demoSent: boolean;
   demoSentDate?: string;
+  brochureSent?: boolean;
+  brochureSentDate?: string;
   followUpDate?: string;
+  followUpTime?: string;
   discoveryCallDate?: string;
   packageRecommended?: PackageName;
   quotationStatus: QuotationStatus;

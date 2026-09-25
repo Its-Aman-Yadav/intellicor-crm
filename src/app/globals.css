@@ -131,6 +131,18 @@ a {
     padding: 0 0.75rem 4rem;
   }
 
+  /* Prevent iOS Safari from zooming into inputs */
+  input[type="text"],
+  input[type="tel"],
+  input[type="url"],
+  input[type="email"],
+  input[type="date"],
+  input[type="time"],
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+
   /* Full screen or bottom-sheet modal on mobile */
   .modal-overlay {
     padding: 0;
@@ -146,13 +158,13 @@ a {
   }
 
   .btn {
-    min-height: 40px;
+    min-height: 42px;
     padding: 0.5rem 0.85rem;
   }
 
   .btn-icon {
-    min-width: 38px;
-    min-height: 38px;
+    min-width: 40px;
+    min-height: 40px;
   }
 }
 

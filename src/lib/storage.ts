@@ -4,7 +4,30 @@ import { DEFAULT_WHATSAPP_TEMPLATES } from './whatsapp';
 import { DEFAULT_CALL_SCRIPT_CONFIG } from '@/data/callScripts';
 import { calculateLeadScore, determineLeadPriority } from './scoring';
 
-const LEADS_STORAGE_KEY = 'intellicor_crm_leads_v1';
+export const MOCK_BUSINESS_NAMES = new Set([
+  'Apex Dental & Implant Clinic',
+  'Blissful Glow Luxury Salon & Spa',
+  'The Urban Crust Woodfired Pizzeria',
+  'FitCore Crossfit & High-Performance Gym',
+  'Studio Vistara Architecture & Interiors',
+  'Royal Heritage Haveli & Resort',
+  'Dr. Rao Orthopedic Specialty Care',
+  'AutoShine Ceramic Detailing Studio',
+  'Sparkle Kids Montessori & Daycare',
+  'Chai & Stories Artisan Bakery',
+  'Elite Law Chambers',
+]);
+
+export function isMockLead(lead: Lead): boolean {
+  if (!lead) return true;
+  if (MOCK_BUSINESS_NAMES.has(lead.businessName)) return true;
+  if (/^lead-(\d+|101|701|901|1101)$/.test(lead.id)) return true;
+  if (lead.ownerName === 'Dr. Sameer Joshi') return true;
+  if (lead.phone === '+91 98201 44521') return true;
+  return false;
+}
+
+const LEADS_STORAGE_KEY = 'intellicor_crm_leads_v3';
 const TEMPLATES_STORAGE_KEY = 'intellicor_crm_templates_v1';
 const CALL_SCRIPTS_STORAGE_KEY = 'intellicor_crm_call_scripts_v1';
 const ACTIVE_REP_KEY = 'intellicor_crm_active_rep_v1';
@@ -20,25 +43,38 @@ export function setStoredActiveRep(rep: string): void {
 }
 
 export function getStoredLeads(): Lead[] {
-  if (typeof window === 'undefined') return INITIAL_LEADS;
+  if (typeof window === 'undefined') return [];
   try {
+    // Purge older mock storage keys
+    localStorage.removeItem('intellicor_crm_leads_v1');
+    localStorage.removeItem('intellicor_crm_leads_v2');
+
     const raw = localStorage.getItem(LEADS_STORAGE_KEY);
     if (!raw) {
-      localStorage.setItem(LEADS_STORAGE_KEY, JSON.stringify(INITIAL_LEADS));
-      return INITIAL_LEADS;
+      localStorage.setItem(LEADS_STORAGE_KEY, JSON.stringify([]));
+      return [];
     }
     const parsed: Lead[] = JSON.parse(raw);
-    return parsed;
+    const filtered = parsed.filter((l) => !isMockLead(l));
+    return filtered;
   } catch (err) {
     console.error('Failed to load leads from localStorage', err);
-    return INITIAL_LEADS;
+    return [];
   }
+}
+
+export function clearAllStoredLeads(): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(LEADS_STORAGE_KEY, JSON.stringify([]));
+  localStorage.removeItem('intellicor_crm_leads_v1');
+  localStorage.removeItem('intellicor_crm_leads_v2');
 }
 
 export function saveStoredLeads(leads: Lead[]): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(LEADS_STORAGE_KEY, JSON.stringify(leads));
+    const clean = leads.filter((l) => !isMockLead(l));
+    localStorage.setItem(LEADS_STORAGE_KEY, JSON.stringify(clean));
   } catch (err) {
     console.error('Failed to save leads to localStorage', err);
   }
