@@ -736,6 +736,40 @@ export default function SimplePowerDialer({
                 className="dialer-textarea"
               />
             </div>
+
+            {/* Previous Call Logs Timeline */}
+            {currentLead.callLogs && currentLead.callLogs.length > 0 && (
+              <div className="past-calls-box">
+                <div className="past-calls-title">
+                  <History size={14} />
+                  <span>Previous Call Notes & Outcomes ({currentLead.callLogs.length}):</span>
+                </div>
+                <div className="past-calls-list">
+                  {currentLead.callLogs
+                    .slice()
+                    .reverse()
+                    .slice(0, 4)
+                    .map((log, idx) => (
+                      <div key={log.id || idx} className="past-call-item">
+                        <div className="past-call-top">
+                          <span className={`log-outcome-badge badge-${(log.result || '').toLowerCase().replace(/\s+/g, '-')}`}>
+                            {log.result}
+                          </span>
+                          <span className="past-call-date">
+                            {log.date ? new Date(log.date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}
+                          </span>
+                        </div>
+                        {log.notes && <p className="past-call-notes">&ldquo;{log.notes}&rdquo;</p>}
+                        {log.nextFollowUpDate && (
+                          <span className="past-call-followup">
+                            Follow-up: {log.nextFollowUpDate} {log.nextFollowUpTime || ''}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* RIGHT COLUMN: DISPOSITION BUTTONS & BROCHURE SECTION */}
@@ -1626,6 +1660,87 @@ export default function SimplePowerDialer({
         .dialer-textarea:focus {
           border-color: #2563eb;
           background: #ffffff;
+        }
+
+        /* Past calls timeline */
+        .past-calls-box {
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-radius: 10px;
+          padding: 0.65rem 0.85rem;
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+        }
+        .past-calls-title {
+          font-size: 0.78rem;
+          font-weight: 700;
+          color: #475569;
+          display: flex;
+          align-items: center;
+          gap: 0.35rem;
+        }
+        .past-calls-list {
+          display: flex;
+          flex-direction: column;
+          gap: 0.45rem;
+        }
+        .past-call-item {
+          background: #ffffff;
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          padding: 0.5rem 0.65rem;
+          display: flex;
+          flex-direction: column;
+          gap: 0.25rem;
+        }
+        .past-call-top {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+        .log-outcome-badge {
+          font-size: 0.7rem;
+          font-weight: 700;
+          padding: 0.15rem 0.45rem;
+          border-radius: 9999px;
+        }
+        .badge-interested {
+          background: #dcfce7;
+          color: #15803d;
+        }
+        .badge-deal-won {
+          background: #fef3c7;
+          color: #b45309;
+        }
+        .badge-call-back-later,
+        .badge-callback {
+          background: #fef9c3;
+          color: #854d0e;
+        }
+        .badge-not-picked-up,
+        .badge-no-answer {
+          background: #fee2e2;
+          color: #b91c1c;
+        }
+        .badge-not-interested {
+          background: #f1f5f9;
+          color: #64748b;
+        }
+        .past-call-date {
+          font-size: 0.7rem;
+          color: #94a3b8;
+        }
+        .past-call-notes {
+          font-size: 0.8rem;
+          color: #334155;
+          margin: 0;
+          font-style: italic;
+        }
+        .past-call-followup {
+          font-size: 0.72rem;
+          color: #0369a1;
+          font-weight: 500;
         }
 
         /* Right Column: Actions side panel */

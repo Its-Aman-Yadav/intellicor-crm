@@ -21,6 +21,7 @@ import {
   deleteLeadFromFirestore,
   subscribeToFirestoreLeads,
   syncAllLeadsToFirestore,
+  clearAllLeadsFromFirestore,
 } from '@/lib/firebase';
 import {
   Lead,
@@ -132,10 +133,17 @@ export default function CRMApp() {
     setIsFirestoreConnected(firestoreActive);
 
     if (firestoreActive) {
+      const initialLocalLeads = getStoredLeads().filter((l) => !isMockLead(l));
+
       const unsubscribe = subscribeToFirestoreLeads(
         (remoteLeads) => {
           if (remoteLeads) {
             const clean = remoteLeads.filter((l) => !isMockLead(l));
+            // If Firestore is empty but user had local leads, sync local leads to Firestore!
+            if (clean.length === 0 && initialLocalLeads.length > 0) {
+              syncAllLeadsToFirestore(initialLocalLeads).catch(console.error);
+              return;
+            }
             setLeads(clean);
             saveStoredLeads(clean);
           }
@@ -196,36 +204,38 @@ export default function CRMApp() {
       updated = [savedLead, ...leads];
     }
     updateAndSaveLeads(updated);
-    if (isFirestoreConnected) {
-      saveLeadToFirestore(savedLead).catch(console.error);
-    }
+    // Always store to Firestore
+    saveLeadToFirestore(savedLead).catch(console.error);
   };
 
   const handleDeleteLead = (leadId: string) => {
     const updated = leads.filter((l) => l.id !== leadId);
     updateAndSaveLeads(updated);
-    if (isFirestoreConnected) {
-      deleteLeadFromFirestore(leadId).catch(console.error);
-    }
+    // Always delete from Firestore
+    deleteLeadFromFirestore(leadId).catch(console.error);
   };
 
   const handleClearAllLeads = () => {
     updateAndSaveLeads([]);
+    // Always clear from Firestore
+    clearAllLeadsFromFirestore().catch(console.error);
   };
 
   const handleUpdateStatus = (leadId: string, newStatus: PipelineStage) => {
+    let updatedLead: Lead | undefined;
     const updated = leads.map((lead) => {
       if (lead.id !== leadId) return lead;
-      return {
+      updatedLead = {
         ...lead,
         status: newStatus,
         updatedAt: new Date().toISOString(),
       };
+      return updatedLead;
     });
     updateAndSaveLeads(updated);
-    if (isFirestoreConnected) {
-      const updatedLead = updated.find((l) => l.id === leadId);
-      if (updatedLead) saveLeadToFirestore(updatedLead).catch(console.error);
+    // Always store to Firestore
+    if (updatedLead) {
+      saveLeadToFirestore(updatedLead).catch(console.error);
     }
   };
 
@@ -336,9 +346,10 @@ export default function CRMApp() {
     });
 
     updateAndSaveLeads(updated);
-    if (isFirestoreConnected) {
-      const updatedLead = updated.find((l) => l.id === leadId);
-      if (updatedLead) saveLeadToFirestore(updatedLead).catch(console.error);
+    // Always store to Firestore
+    const updatedLead = updated.find((l) => l.id === leadId);
+    if (updatedLead) {
+      saveLeadToFirestore(updatedLead).catch(console.error);
     }
   };
 
@@ -379,9 +390,8 @@ export default function CRMApp() {
       if (parsed.length > 0) {
         const merged = [...parsed, ...leads];
         updateAndSaveLeads(merged);
-        if (isFirestoreConnected) {
-          syncAllLeadsToFirestore(parsed).catch(console.error);
-        }
+        // Always store to Firestore
+        syncAllLeadsToFirestore(parsed).catch(console.error);
         alert(`Successfully imported ${parsed.length} leads!`);
       } else {
         alert('Could not parse valid leads from this file.');
@@ -397,9 +407,8 @@ export default function CRMApp() {
   ) => {
     const merged = [...newLeads, ...leads];
     updateAndSaveLeads(merged);
-    if (isFirestoreConnected) {
-      syncAllLeadsToFirestore(newLeads).catch(console.error);
-    }
+    // Always store to Firestore
+    syncAllLeadsToFirestore(newLeads).catch(console.error);
     if (startCallingImmediately && newLeads.length > 0) {
       setActiveCallingLeadId(newLeads[0].id);
       setSimpleTab('call_queue');
@@ -581,6 +590,13 @@ export default function CRMApp() {
                     <span>Won: <strong>₹{stats.wonRevenue.toLocaleString('en-IN')}</strong> ({stats.wonDeals})</span>
                   </div>
                 )}
+                <div
+                  className="header-stat-pill sync-pill"
+                  title={isFirestoreConnected ? "Connected to Cloud Firestore — changes sync automatically" : "Connecting to Cloud Firestore..."}
+                >
+                  <span className={`sync-dot ${isFirestoreConnected ? 'live' : 'pending'}`} />
+                  <span>{isFirestoreConnected ? 'Cloud Synced' : 'Syncing...'}</span>
+                </div>
               </div>
 
               {/* Upload Excel Button */}
@@ -810,6 +826,27 @@ export default function CRMApp() {
             background: #eff6ff;
             border-color: #bfdbfe;
             color: #1e50bc;
+          }
+          .header-stat-pill.sync-pill {
+            background: #f0fdf4;
+            border-color: #bbf7d0;
+            color: #15803d;
+            font-size: 0.76rem;
+            font-weight: 600;
+          }
+          .sync-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            display: inline-block;
+          }
+          .sync-dot.live {
+            background: #22c55e;
+            box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.25);
+          }
+          .sync-dot.pending {
+            background: #eab308;
+            box-shadow: 0 0 0 2px rgba(234, 179, 8, 0.25);
           }
           @keyframes pulseSubtle {
             0%, 100% { transform: scale(1); }

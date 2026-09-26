@@ -90,17 +90,36 @@ export function isFirestoreConfigured(): boolean {
   return Boolean(config && config.apiKey && config.projectId);
 }
 
+/**
+ * Strips out undefined values from object recursively
+ * because Firestore setDoc throws an error if any value is `undefined`.
+ */
+export function sanitizeForFirestore<T extends Record<string, any>>(obj: T): T {
+  const clean: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+        clean[key] = sanitizeForFirestore(value);
+      } else {
+        clean[key] = value;
+      }
+    }
+  }
+  return clean as T;
+}
+
 export async function saveLeadToFirestore(lead: Lead): Promise<boolean> {
   const db = getFirebaseDb();
   if (!db) return false;
 
   try {
     const leadRef = doc(db, 'leads', lead.id);
-    await setDoc(leadRef, lead, { merge: true });
+    const sanitized = sanitizeForFirestore(lead);
+    await setDoc(leadRef, sanitized, { merge: true });
     return true;
   } catch (err) {
     console.error('Error saving lead to Firestore:', err);
-    throw err;
+    return false;
   }
 }
 
@@ -114,25 +133,51 @@ export async function deleteLeadFromFirestore(leadId: string): Promise<boolean> 
     return true;
   } catch (err) {
     console.error('Error deleting lead from Firestore:', err);
-    throw err;
+    return false;
   }
 }
 
 export async function syncAllLeadsToFirestore(leads: Lead[]): Promise<number> {
   const db = getFirebaseDb();
-  if (!db) throw new Error('Firestore is not configured');
+  if (!db) return 0;
 
   try {
-    const batch = writeBatch(db);
-    leads.forEach((lead) => {
-      const ref = doc(db, 'leads', lead.id);
-      batch.set(ref, lead, { merge: true });
-    });
-    await batch.commit();
-    return leads.length;
+    const cleanLeads = leads.filter((l) => l && l.id);
+    const chunkSize = 400; // Firestore allows max 500 writes per batch
+    for (let i = 0; i < cleanLeads.length; i += chunkSize) {
+      const chunk = cleanLeads.slice(i, i + chunkSize);
+      const batch = writeBatch(db);
+      chunk.forEach((lead) => {
+        const ref = doc(db, 'leads', lead.id);
+        batch.set(ref, sanitizeForFirestore(lead), { merge: true });
+      });
+      await batch.commit();
+    }
+    return cleanLeads.length;
   } catch (err) {
     console.error('Error batch syncing leads to Firestore:', err);
-    throw err;
+    return 0;
+  }
+}
+
+export async function clearAllLeadsFromFirestore(): Promise<void> {
+  const db = getFirebaseDb();
+  if (!db) return;
+
+  try {
+    const snapshot = await getDocs(collection(db, 'leads'));
+    const chunkSize = 400;
+    const docs = snapshot.docs;
+    for (let i = 0; i < docs.length; i += chunkSize) {
+      const chunk = docs.slice(i, i + chunkSize);
+      const batch = writeBatch(db);
+      chunk.forEach((d) => {
+        batch.delete(d.ref);
+      });
+      await batch.commit();
+    }
+  } catch (err) {
+    console.error('Error clearing leads from Firestore:', err);
   }
 }
 

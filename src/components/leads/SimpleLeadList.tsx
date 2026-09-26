@@ -306,6 +306,18 @@ export default function SimpleLeadList({
             <span>Export Excel</span>
           </button>
 
+          {onOpenNewLead && (
+            <button
+              type="button"
+              onClick={onOpenNewLead}
+              className="btn-banner-add-lead"
+              title="Add a single new client or lead"
+            >
+              <Plus size={16} />
+              <span>+ Add Lead</span>
+            </button>
+          )}
+
           <button onClick={onOpenUploadModal} className="btn-banner-upload">
             <FileSpreadsheet size={16} />
             <span>Upload Excel</span>
@@ -1169,6 +1181,24 @@ export default function SimpleLeadList({
         .btn-banner-export:disabled {
           opacity: 0.5;
           cursor: not-allowed;
+        }
+        .btn-banner-add-lead {
+          display: flex;
+          align-items: center;
+          gap: 0.45rem;
+          background: #eff6ff;
+          border: 1.5px solid #bfdbfe;
+          color: #1e50bc;
+          padding: 0.65rem 1.15rem;
+          border-radius: 9px;
+          font-size: 0.88rem;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.15s;
+        }
+        .btn-banner-add-lead:hover {
+          background: #dbeafe;
+          border-color: #93c5fd;
         }
         .btn-banner-upload {
           display: flex;
@@ -2413,6 +2443,7 @@ export default function SimpleLeadList({
             flex-wrap: wrap;
             gap: 0.5rem;
           }
+          .btn-banner-add-lead,
           .btn-banner-upload,
           .btn-banner-start-calling {
             flex: 1;
@@ -2478,6 +2509,8 @@ export default function SimpleLeadList({
             flex-direction: column;
           }
           .btn-banner-clear,
+          .btn-banner-export,
+          .btn-banner-add-lead,
           .btn-banner-upload,
           .btn-banner-start-calling {
             width: 100%;
