@@ -271,40 +271,7 @@ export default function DailyDashboard({
     return list;
   }, [repFilteredLeads, dailyTarget?.contactsTarget]);
 
-  // Aggregate category metrics across all sheets
-  const categorySummaries = useMemo(() => {
-    const catMap = new Map<
-      string,
-      { total: number; contacted: number; remaining: number; sheetsCount: number }
-    >();
 
-    repFilteredLeads.forEach((lead) => {
-      const cat = (lead.groupName || 'General Leads').trim();
-      if (!catMap.has(cat)) {
-        catMap.set(cat, { total: 0, contacted: 0, remaining: 0, sheetsCount: 0 });
-      }
-      const entry = catMap.get(cat)!;
-      entry.total++;
-      const isContacted =
-        lead.status !== 'New' ||
-        (lead.callLogs && lead.callLogs.length > 0) ||
-        Boolean(lead.callResult);
-      if (isContacted) {
-        entry.contacted++;
-      } else {
-        entry.remaining++;
-      }
-    });
-
-    const dailyPace = Math.max(15, dailyTarget?.contactsTarget || 50);
-
-    return Array.from(catMap.entries()).map(([name, data]) => ({
-      name,
-      ...data,
-      percent: data.total > 0 ? Math.round((data.contacted / data.total) * 100) : 0,
-      daysToFinish: data.remaining === 0 ? 0 : Math.max(1, Math.ceil(data.remaining / dailyPace)),
-    }));
-  }, [repFilteredLeads, dailyTarget?.contactsTarget]);
 
   // Targets definition
   const targets = [
@@ -592,79 +559,7 @@ export default function DailyDashboard({
         </div>
       </div>
 
-      {/* ========================================================= */}
-      {/* 2. CATEGORY QUEUES & COMPLETION FORECAST                  */}
-      {/* ========================================================= */}
-      <div className="section-title-row" style={{ marginTop: '0.75rem' }}>
-        <div>
-          <h2 className="section-title">Categories & Industry Lists</h2>
-          <p className="section-sub">
-            Click any category to open immediately in 1-by-1 calling or view all leads
-          </p>
-        </div>
-      </div>
 
-      {categorySummaries.length > 0 ? (
-        <div className="dashboard-cat-cards-grid">
-          {categorySummaries.map((cat) => (
-            <div key={cat.name} className="dashboard-cat-card">
-              <div className="cat-card-top-row">
-                <div className="cat-badge-wrap">
-                  <Building2 size={16} className="text-blue" />
-                  <span className="cat-title">{cat.name}</span>
-                </div>
-                <span className="cat-pending-tag">
-                  {cat.remaining} pending
-                </span>
-              </div>
-
-              <div className="cat-meta-stats">
-                <span>Total: <strong>{cat.total}</strong></span>
-                <span className="meta-sep">•</span>
-                <span>Contacted: <strong className="text-emerald">{cat.contacted}</strong></span>
-                <span className="meta-sep">•</span>
-                <span>~{cat.daysToFinish} days</span>
-              </div>
-
-              <div className="cat-progress-track">
-                <div className="cat-progress-bar" style={{ width: `${cat.percent}%` }} />
-              </div>
-
-              <div className="cat-quick-actions">
-                <button
-                  type="button"
-                  onClick={() => onStartCallingSheet?.(cat.name, '')}
-                  className="btn-cat-call"
-                  title={`Start 1-by-1 calling queue for ${cat.name}`}
-                >
-                  <PhoneCall size={13} />
-                  <span>Call 1-by-1</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => onViewSheetLeads?.(cat.name, '')}
-                  className="btn-cat-view"
-                  title={`View all leads in ${cat.name}`}
-                >
-                  <Layers size={13} />
-                  <span>All Leads</span>
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="card empty-forecast-msg" style={{ padding: '2rem 1.5rem', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
-          <FolderOpen size={28} className="text-muted" />
-          <span style={{ fontSize: '0.95rem', fontWeight: 600, color: '#334155' }}>
-            No leads or categories uploaded yet.
-          </span>
-          <p style={{ margin: 0, fontSize: '0.82rem', color: '#64748b' }}>
-            Go to <strong>Groups &amp; Sheets</strong> or click <strong>Bulk Upload Excel</strong> to import your first batch of leads.
-          </p>
-        </div>
-      )}
 
       <div className="section-title-row" style={{ marginTop: '1.25rem' }}>
         <div>
@@ -1395,117 +1290,7 @@ export default function DailyDashboard({
           color: #0b1d33;
           border-color: #94a3b8;
         }
-        /* CATEGORY CARDS GRID */
-        .dashboard-cat-cards-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-          gap: 1rem;
-          margin-bottom: 1rem;
-        }
-        .dashboard-cat-card {
-          background: #ffffff;
-          border: 1px solid #e2e8f0;
-          border-radius: 12px;
-          padding: 1.15rem;
-          display: flex;
-          flex-direction: column;
-          gap: 0.75rem;
-          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
-          transition: transform 0.15s ease, box-shadow 0.15s ease;
-        }
-        .dashboard-cat-card:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-        }
-        .cat-card-top-row {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-        }
-        .cat-badge-wrap {
-          display: flex;
-          align-items: center;
-          gap: 0.45rem;
-        }
-        .cat-title {
-          font-size: 1rem;
-          font-weight: 800;
-          color: #0b1d33;
-        }
-        .cat-pending-tag {
-          font-size: 0.72rem;
-          font-weight: 700;
-          background: #fef3c7;
-          color: #b45309;
-          padding: 0.2rem 0.5rem;
-          border-radius: 9999px;
-        }
-        .cat-meta-stats {
-          display: flex;
-          align-items: center;
-          gap: 0.4rem;
-          font-size: 0.78rem;
-          color: #64748b;
-        }
-        .meta-sep {
-          color: #cbd5e1;
-        }
-        .cat-progress-track {
-          width: 100%;
-          height: 6px;
-          background: #e2e8f0;
-          border-radius: 999px;
-          overflow: hidden;
-        }
-        .cat-progress-bar {
-          height: 100%;
-          background: #22c55e;
-          border-radius: 999px;
-        }
-        .cat-quick-actions {
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-          margin-top: 0.25rem;
-        }
-        .btn-cat-call {
-          flex: 1;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 0.4rem;
-          background: #1e50bc;
-          color: #ffffff;
-          border: none;
-          padding: 0.45rem 0.75rem;
-          border-radius: 8px;
-          font-size: 0.8rem;
-          font-weight: 700;
-          cursor: pointer;
-          transition: all 0.15s ease;
-        }
-        .btn-cat-call:hover {
-          background: #1742a0;
-        }
-        .btn-cat-view {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 0.4rem;
-          background: #f8fafc;
-          color: #475569;
-          border: 1px solid #cbd5e1;
-          padding: 0.45rem 0.75rem;
-          border-radius: 8px;
-          font-size: 0.8rem;
-          font-weight: 600;
-          cursor: pointer;
-          transition: all 0.15s ease;
-        }
-        .btn-cat-view:hover {
-          background: #f1f5f9;
-          color: #0b1d33;
-        }
+
         .empty-forecast-msg {
           display: flex;
           align-items: center;
