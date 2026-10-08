@@ -24,6 +24,10 @@ import {
   subscribeToFirestoreLeads,
   syncAllLeadsToFirestore,
   clearAllLeadsFromFirestore,
+  saveTodoToFirestore,
+  deleteTodoFromFirestore,
+  subscribeToFirestoreTodos,
+  syncAllTodosToFirestore,
 } from '@/lib/firebase';
 import {
   Lead,
@@ -34,6 +38,7 @@ import {
   CallResult,
   CommonObjection,
   UserDailyTarget,
+  TodoItem,
 } from '@/types/crm';
 import {
   getStoredLeads,
@@ -51,6 +56,8 @@ import {
   saveStoredDailyTarget,
   DEFAULT_DAILY_TARGET,
   generateSampleCategoryLeads,
+  getStoredTodos,
+  saveStoredTodos,
 } from '@/lib/storage';
 import {
   LayoutList,
@@ -102,6 +109,7 @@ export default function CRMApp() {
     new Date().toISOString().slice(0, 10)
   );
   const [templates, setTemplates] = useState<WhatsAppTemplate[]>([]);
+  const [todos, setTodos] = useState<TodoItem[]>([]);
 
   // Cloud Firestore database connection state
   const [isFirestoreConnected, setIsFirestoreConnected] = useState(false);
@@ -149,6 +157,10 @@ export default function CRMApp() {
 
     const loadedTemplates = getStoredTemplates();
     setTemplates(loadedTemplates);
+
+    const loadedTodos = getStoredTodos();
+    setTodos(loadedTodos);
+
     const rep = getStoredActiveRep();
     setActiveRep(rep || 'All Reps');
 
@@ -158,8 +170,9 @@ export default function CRMApp() {
 
     if (firestoreActive) {
       const initialLocalLeads = getStoredLeads().filter((l) => !isMockLead(l));
+      const initialLocalTodos = getStoredTodos();
 
-      const unsubscribe = subscribeToFirestoreLeads(
+      const unsubscribeLeads = subscribeToFirestoreLeads(
         (remoteLeads) => {
           if (remoteLeads) {
             const clean = remoteLeads.filter((l) => !isMockLead(l));
@@ -176,8 +189,26 @@ export default function CRMApp() {
           console.error('Firestore sync error:', err);
         }
       );
+
+      const unsubscribeTodos = subscribeToFirestoreTodos(
+        (remoteTodos) => {
+          if (remoteTodos) {
+            if (remoteTodos.length === 0 && initialLocalTodos.length > 0) {
+              syncAllTodosToFirestore(initialLocalTodos).catch(console.error);
+              return;
+            }
+            setTodos(remoteTodos);
+            saveStoredTodos(remoteTodos);
+          }
+        },
+        (err) => {
+          console.error('Firestore todos sync error:', err);
+        }
+      );
+
       return () => {
-        if (unsubscribe) unsubscribe();
+        if (unsubscribeLeads) unsubscribeLeads();
+        if (unsubscribeTodos) unsubscribeTodos();
       };
     }
   }, []);
@@ -382,6 +413,45 @@ export default function CRMApp() {
   const handleSaveTemplates = (newTemplates: WhatsAppTemplate[]) => {
     setTemplates(newTemplates);
     saveStoredTemplates(newTemplates);
+  };
+
+  const handleSaveTodo = (todo: TodoItem) => {
+    const exists = todos.some((t) => t.id === todo.id);
+    let updated: TodoItem[];
+    if (exists) {
+      updated = todos.map((t) => (t.id === todo.id ? todo : t));
+    } else {
+      updated = [todo, ...todos];
+    }
+    setTodos(updated);
+    saveStoredTodos(updated);
+    saveTodoToFirestore(todo).catch(console.error);
+  };
+
+  const handleToggleTodo = (todoId: string) => {
+    let toggledTodo: TodoItem | undefined;
+    const updated = todos.map((t) => {
+      if (t.id !== todoId) return t;
+      const completed = !t.completed;
+      toggledTodo = {
+        ...t,
+        completed,
+        completedAt: completed ? new Date().toISOString() : undefined,
+      };
+      return toggledTodo;
+    });
+    setTodos(updated);
+    saveStoredTodos(updated);
+    if (toggledTodo) {
+      saveTodoToFirestore(toggledTodo).catch(console.error);
+    }
+  };
+
+  const handleDeleteTodo = (todoId: string) => {
+    const updated = todos.filter((t) => t.id !== todoId);
+    setTodos(updated);
+    saveStoredTodos(updated);
+    deleteTodoFromFirestore(todoId).catch(console.error);
   };
 
   const handleExportCSV = () => {
@@ -760,6 +830,7 @@ export default function CRMApp() {
               onOpenLead={handleOpenLead}
               onQuickCall={handleQuickCall}
               onOpenNewLead={handleOpenNewLead}
+              onUpdateLead={handleSaveLead}
               templates={templates}
               selectedDate={selectedDate}
               setSelectedDate={setSelectedDate}
@@ -767,6 +838,10 @@ export default function CRMApp() {
               onViewSheetLeads={handleViewSheetLeads}
               dailyTarget={dailyTarget}
               onOpenTargetModal={() => setIsTargetModalOpen(true)}
+              todos={todos}
+              onSaveTodo={handleSaveTodo}
+              onToggleTodo={handleToggleTodo}
+              onDeleteTodo={handleDeleteTodo}
             />
           )}
 
@@ -782,6 +857,7 @@ export default function CRMApp() {
               onDeleteSheet={handleDeleteSheet}
               onLoadSampleCategories={handleLoadSampleCategories}
               onOpenTargetModal={() => setIsTargetModalOpen(true)}
+              onSaveTarget={handleSaveTarget}
               activeRep={activeRep}
             />
           )}
@@ -1301,6 +1377,7 @@ export default function CRMApp() {
               onOpenLead={handleOpenLead}
               onQuickCall={handleQuickCall}
               onOpenNewLead={handleOpenNewLead}
+              onUpdateLead={handleSaveLead}
               templates={templates}
               selectedDate={selectedDate}
               setSelectedDate={setSelectedDate}
@@ -1310,6 +1387,10 @@ export default function CRMApp() {
               }}
               dailyTarget={dailyTarget}
               onOpenTargetModal={() => setIsTargetModalOpen(true)}
+              todos={todos}
+              onSaveTodo={handleSaveTodo}
+              onToggleTodo={handleToggleTodo}
+              onDeleteTodo={handleDeleteTodo}
             />
           )}
 

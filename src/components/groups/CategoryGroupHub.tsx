@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Lead, UserDailyTarget } from '@/types/crm';
 import { exportLeadsToExcel } from '@/lib/excelParser';
 import {
@@ -27,6 +27,7 @@ import {
   Eye,
   Check,
   AlertCircle,
+  Zap,
 } from 'lucide-react';
 
 interface CategoryGroupHubProps {
@@ -40,6 +41,7 @@ interface CategoryGroupHubProps {
   onDeleteSheet: (categoryName: string, sheetName: string) => void;
   onLoadSampleCategories: () => void;
   onOpenTargetModal: () => void;
+  onSaveTarget?: (newTarget: UserDailyTarget) => void;
   activeRep: string;
 }
 
@@ -54,6 +56,7 @@ export default function CategoryGroupHub({
   onDeleteSheet,
   onLoadSampleCategories,
   onOpenTargetModal,
+  onSaveTarget,
   activeRep,
 }: CategoryGroupHubProps) {
   const [searchQuery, setSearchQuery] = useState('');
@@ -65,15 +68,24 @@ export default function CategoryGroupHub({
     return leads.filter((l) => l.assignedRep === activeRep);
   }, [leads, activeRep]);
 
-  // Daily pace calculation (minimum 15 leads/day for realistic projection, or based on user's target)
-  const effectiveDailyPace = useMemo(() => {
-    const targetPace = dailyTarget.contactsTarget || 50;
-    if (todayCallsCount > 0) {
-      // Blend actual calls today with target pace
-      return Math.max(todayCallsCount, Math.round(targetPace * 0.7));
+  // Base daily target pace
+  const baseTargetPace = dailyTarget.contactsTarget || 50;
+
+  // Manual calling pace state (allows rep to manually simulate fast vs slow pace)
+  const [manualPace, setManualPace] = useState<number>(baseTargetPace);
+  const [targetSavedToast, setTargetSavedToast] = useState(false);
+
+  // Sync when dailyTarget changes from external modal
+  useEffect(() => {
+    if (dailyTarget.contactsTarget) {
+      setManualPace(dailyTarget.contactsTarget);
     }
-    return targetPace;
-  }, [dailyTarget.contactsTarget, todayCallsCount]);
+  }, [dailyTarget.contactsTarget]);
+
+  // Effective daily pace uses manual simulation pace
+  const effectiveDailyPace = useMemo(() => {
+    return Math.max(1, Number(manualPace) || baseTargetPace);
+  }, [manualPace, baseTargetPace]);
 
   // Group leads by Category and Sheet
   const categoryGroups = useMemo(() => {
@@ -214,12 +226,14 @@ export default function CategoryGroupHub({
         (l.callLogs && l.callLogs.length > 0) ||
         Boolean(l.callResult)
     ).length;
-    const pending = total - contacted;
+    const pending = Math.max(0, total - contacted);
     const interested = repLeads.filter(
       (l) => l.status === 'Interested' || l.callResult === 'Interested'
     ).length;
     const totalSheets = categoryGroups.reduce((acc, c) => acc + c.sheets.length, 0);
-    const overallDaysToFinish = pending === 0 ? 0 : Math.max(1, Math.ceil(pending / effectiveDailyPace));
+    // When total is 0 or all are contacted, days is 0
+    const overallDaysToFinish =
+      total === 0 || pending === 0 ? 0 : Math.max(1, Math.ceil(pending / effectiveDailyPace));
 
     return {
       total,
@@ -231,6 +245,72 @@ export default function CategoryGroupHub({
       overallDaysToFinish,
     };
   }, [repLeads, categoryGroups, effectiveDailyPace]);
+
+  // Comparison metrics for Fast or Slow pace
+  const paceSpeedComparison = useMemo(() => {
+    const pending = globalStats.pending;
+    const currentPace = effectiveDailyPace;
+    const basePace = baseTargetPace;
+
+    const baseDays = pending > 0 ? Math.ceil(pending / basePace) : 0;
+    const testDays = pending > 0 ? Math.ceil(pending / currentPace) : 0;
+    const daysDiff = baseDays - testDays; // > 0 means faster, < 0 means slower
+
+    const deltaPercent = Math.round(((currentPace - basePace) / basePace) * 100);
+
+    let speedState: 'faster' | 'slower' | 'equal' = 'equal';
+    if (currentPace > basePace) speedState = 'faster';
+    else if (currentPace < basePace) speedState = 'slower';
+
+    let badgeText = '';
+    let descriptionText = '';
+
+    if (globalStats.total === 0) {
+      if (speedState === 'faster') {
+        badgeText = `⚡ ${Math.abs(deltaPercent)}% Faster`;
+        descriptionText = `~${Math.ceil(100 / currentPace)} days per 100 leads (vs ~${Math.ceil(100 / basePace)}d @ ${basePace}/day)`;
+      } else if (speedState === 'slower') {
+        badgeText = `🐢 ${Math.abs(deltaPercent)}% Slower`;
+        descriptionText = `~${Math.ceil(100 / currentPace)} days per 100 leads (vs ~${Math.ceil(100 / basePace)}d @ ${basePace}/day)`;
+      } else {
+        badgeText = `🎯 Target (${basePace}/d)`;
+        descriptionText = `~${Math.ceil(100 / currentPace)} days per 100 leads @ ${currentPace}/day`;
+      }
+    } else if (pending === 0) {
+      badgeText = '🎉 All Contacted';
+      descriptionText = `All ${globalStats.total} contacts finished`;
+    } else {
+      if (speedState === 'faster') {
+        if (daysDiff > 0) {
+          badgeText = `⚡ ${daysDiff} ${daysDiff === 1 ? 'day' : 'days'} faster`;
+        } else {
+          badgeText = `⚡ Faster (+${currentPace - basePace}/day)`;
+        }
+        descriptionText = `Finishes in ~${testDays} days instead of ~${baseDays} days (@ ${basePace}/day)`;
+      } else if (speedState === 'slower') {
+        const extraDays = Math.abs(daysDiff);
+        if (extraDays > 0) {
+          badgeText = `🐢 ${extraDays} ${extraDays === 1 ? 'day' : 'days'} slower`;
+        } else {
+          badgeText = `🐢 Slower (-${basePace - currentPace}/day)`;
+        }
+        descriptionText = `Takes ~${testDays} days instead of ~${baseDays} days (@ ${basePace}/day)`;
+      } else {
+        badgeText = `🎯 On Target`;
+        descriptionText = `~${testDays} days to finish pipeline @ ${basePace} calls/day`;
+      }
+    }
+
+    return {
+      speedState,
+      daysDiff,
+      deltaPercent,
+      baseDays,
+      testDays,
+      badgeText,
+      descriptionText,
+    };
+  }, [globalStats.pending, globalStats.total, effectiveDailyPace, baseTargetPace]);
 
   // Helper for Category Icon
   const getCategoryIcon = (name: string) => {
@@ -373,15 +453,141 @@ export default function CategoryGroupHub({
         <div className="stat-card highlight-pace-card">
           <div className="stat-header">
             <span className="stat-label">Completion Pace</span>
-            <Clock size={16} className="stat-icon text-amber" />
+            <div className="stat-header-badges">
+              <span className={`pace-status-pill ${paceSpeedComparison.speedState}`}>
+                {paceSpeedComparison.badgeText}
+              </span>
+              <Clock size={16} className="stat-icon text-amber" />
+            </div>
           </div>
+
           <div className="stat-value">
-            {globalStats.pending === 0
-              ? 'Completed 🎉'
-              : `~${globalStats.overallDaysToFinish} Days`}
+            {globalStats.total === 0 ? (
+              <span className="stat-empty-val">--</span>
+            ) : globalStats.pending === 0 ? (
+              'Completed 🎉'
+            ) : (
+              `~${globalStats.overallDaysToFinish} ${globalStats.overallDaysToFinish === 1 ? 'Day' : 'Days'}`
+            )}
           </div>
+
           <div className="stat-sub">
-            @ {effectiveDailyPace} calls/day pace to finish pipeline
+            {globalStats.total === 0
+              ? paceSpeedComparison.descriptionText
+              : globalStats.pending === 0
+              ? `All ${globalStats.total} contacts reached`
+              : paceSpeedComparison.descriptionText}
+          </div>
+
+          {/* Interactive Manual Pace Simulator ("fast or slow" checker) */}
+          <div className="pace-simulator-widget">
+            <div className="pace-simulator-top">
+              <span className="pace-simulator-title">
+                <Zap size={12} className="text-amber" /> Test Speed:
+              </span>
+              <div className="pace-simulator-actions">
+                {manualPace !== baseTargetPace && (
+                  <>
+                    <button
+                      type="button"
+                      className="btn-pace-reset"
+                      onClick={() => setManualPace(baseTargetPace)}
+                      title="Reset to your default daily target"
+                    >
+                      Reset
+                    </button>
+                    {onSaveTarget && (
+                      <button
+                        type="button"
+                        className="btn-pace-save"
+                        onClick={() => {
+                          onSaveTarget({
+                            ...dailyTarget,
+                            contactsTarget: manualPace,
+                          });
+                          setTargetSavedToast(true);
+                          setTimeout(() => setTargetSavedToast(false), 2500);
+                        }}
+                        title="Save this pace as your daily target goal"
+                      >
+                        {targetSavedToast ? '✓ Saved' : 'Save Goal'}
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Stepper + Input */}
+            <div className="pace-stepper-control">
+              <button
+                type="button"
+                className="pace-stepper-btn"
+                onClick={() => setManualPace((p) => Math.max(5, p - 5))}
+                title="Decrease 5 calls/day (test slower pace)"
+              >
+                -5
+              </button>
+              <div className="pace-input-box">
+                <input
+                  type="number"
+                  min="5"
+                  max="500"
+                  step="5"
+                  value={manualPace}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value, 10);
+                    if (!isNaN(val)) setManualPace(Math.max(1, Math.min(500, val)));
+                  }}
+                  className="pace-input-field"
+                />
+                <span className="pace-input-unit">calls / day</span>
+              </div>
+              <button
+                type="button"
+                className="pace-stepper-btn"
+                onClick={() => setManualPace((p) => Math.min(500, p + 5))}
+                title="Increase 5 calls/day (test faster pace)"
+              >
+                +5
+              </button>
+            </div>
+
+            {/* Presets: 25 Slow, 50 Normal, 75 Fast, 100 Sprint */}
+            <div className="pace-presets-row">
+              <button
+                type="button"
+                className={`pace-preset-btn ${manualPace === 25 ? 'active slow' : ''}`}
+                onClick={() => setManualPace(25)}
+                title="Slow Pace: 25 calls/day"
+              >
+                🐢 25
+              </button>
+              <button
+                type="button"
+                className={`pace-preset-btn ${manualPace === 50 ? 'active normal' : ''}`}
+                onClick={() => setManualPace(50)}
+                title="Normal Pace: 50 calls/day"
+              >
+                🎯 50
+              </button>
+              <button
+                type="button"
+                className={`pace-preset-btn ${manualPace === 75 ? 'active fast' : ''}`}
+                onClick={() => setManualPace(75)}
+                title="Fast Pace: 75 calls/day"
+              >
+                ⚡ 75
+              </button>
+              <button
+                type="button"
+                className={`pace-preset-btn ${manualPace === 100 ? 'active sprint' : ''}`}
+                onClick={() => setManualPace(100)}
+                title="Sprint Pace: 100 calls/day"
+              >
+                🚀 100
+              </button>
+            </div>
           </div>
         </div>
       </section>
@@ -854,16 +1060,52 @@ export default function CategoryGroupHub({
           border-radius: 14px;
           padding: 1.15rem 1.25rem;
           box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+          display: flex;
+          flex-direction: column;
         }
         .highlight-pace-card {
-          background: linear-gradient(135deg, #ffffff, #fffbeb);
+          background: linear-gradient(135deg, #ffffff, #fffdf5);
           border-color: #fde68a;
+          box-shadow: 0 2px 8px rgba(245, 158, 11, 0.08);
         }
         .stat-header {
           display: flex;
           align-items: center;
           justify-content: space-between;
           margin-bottom: 0.5rem;
+          gap: 0.5rem;
+        }
+        .stat-header-badges {
+          display: flex;
+          align-items: center;
+          gap: 0.4rem;
+        }
+        .pace-status-pill {
+          font-size: 0.68rem;
+          font-weight: 700;
+          padding: 0.15rem 0.45rem;
+          border-radius: 999px;
+          line-height: 1.2;
+          white-space: nowrap;
+        }
+        .pace-status-pill.faster {
+          background: #ecfdf5;
+          color: #059669;
+          border: 1px solid #a7f3d0;
+        }
+        .pace-status-pill.slower {
+          background: #fff7ed;
+          color: #c2410c;
+          border: 1px solid #fed7aa;
+        }
+        .pace-status-pill.equal {
+          background: #eff6ff;
+          color: #1e50bc;
+          border: 1px solid #bfdbfe;
+        }
+        .stat-empty-val {
+          color: #94a3b8;
+          font-weight: 800;
         }
         .stat-label {
           font-size: 0.8rem;
@@ -873,15 +1115,16 @@ export default function CategoryGroupHub({
           letter-spacing: 0.04em;
         }
         .stat-value {
-          font-size: 1.6rem;
+          font-size: 1.55rem;
           font-weight: 800;
           color: #0b1d33;
           letter-spacing: -0.02em;
-          margin-bottom: 0.3rem;
+          margin-bottom: 0.25rem;
         }
         .stat-sub {
-          font-size: 0.78rem;
+          font-size: 0.77rem;
           color: #64748b;
+          line-height: 1.35;
         }
         .stat-progress-bar {
           height: 6px;
@@ -894,6 +1137,169 @@ export default function CategoryGroupHub({
           height: 100%;
           background: #10b981;
           border-radius: 999px;
+        }
+
+        /* Pace Simulator Widget */
+        .pace-simulator-widget {
+          margin-top: 0.75rem;
+          padding-top: 0.65rem;
+          border-top: 1px dashed #fde68a;
+          display: flex;
+          flex-direction: column;
+          gap: 0.45rem;
+        }
+        .pace-simulator-top {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 0.4rem;
+        }
+        .pace-simulator-title {
+          font-size: 0.7rem;
+          font-weight: 700;
+          color: #92400e;
+          display: flex;
+          align-items: center;
+          gap: 0.25rem;
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+        }
+        .pace-simulator-actions {
+          display: flex;
+          align-items: center;
+          gap: 0.35rem;
+        }
+        .btn-pace-reset {
+          background: transparent;
+          border: 1px solid #cbd5e1;
+          border-radius: 5px;
+          padding: 0.1rem 0.35rem;
+          font-size: 0.65rem;
+          font-weight: 600;
+          color: #64748b;
+          cursor: pointer;
+          transition: all 0.15s;
+        }
+        .btn-pace-reset:hover {
+          background: #f1f5f9;
+          color: #1e293b;
+        }
+        .btn-pace-save {
+          background: #1e50bc;
+          color: #ffffff;
+          border: none;
+          border-radius: 5px;
+          padding: 0.1rem 0.45rem;
+          font-size: 0.65rem;
+          font-weight: 700;
+          cursor: pointer;
+          transition: all 0.15s;
+        }
+        .btn-pace-save:hover {
+          background: #18429c;
+        }
+        .pace-stepper-control {
+          display: flex;
+          align-items: center;
+          gap: 0.3rem;
+          width: 100%;
+        }
+        .pace-stepper-btn {
+          width: 28px;
+          height: 28px;
+          border-radius: 6px;
+          border: 1px solid #cbd5e1;
+          background: #ffffff;
+          color: #334155;
+          font-weight: 800;
+          font-size: 0.75rem;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: all 0.15s;
+        }
+        .pace-stepper-btn:hover {
+          background: #f8fafc;
+          border-color: #94a3b8;
+          color: #0f172a;
+        }
+        .pace-input-box {
+          flex: 1;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.25rem;
+          background: #ffffff;
+          border: 1px solid #cbd5e1;
+          border-radius: 6px;
+          padding: 0.15rem 0.4rem;
+          height: 28px;
+        }
+        .pace-input-field {
+          width: 42px;
+          text-align: right;
+          border: none;
+          outline: none;
+          font-weight: 800;
+          font-size: 0.85rem;
+          color: #0b1d33;
+          background: transparent;
+          padding: 0;
+        }
+        .pace-input-field::-webkit-inner-spin-button,
+        .pace-input-field::-webkit-outer-spin-button {
+          -webkit-appearance: none;
+          margin: 0;
+        }
+        .pace-input-unit {
+          font-size: 0.68rem;
+          color: #64748b;
+          font-weight: 600;
+          white-space: nowrap;
+        }
+        .pace-presets-row {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 0.25rem;
+          width: 100%;
+        }
+        .pace-preset-btn {
+          padding: 0.25rem 0.2rem;
+          border-radius: 6px;
+          border: 1px solid #e2e8f0;
+          background: #ffffff;
+          font-size: 0.68rem;
+          font-weight: 700;
+          color: #475569;
+          cursor: pointer;
+          text-align: center;
+          transition: all 0.15s;
+          white-space: nowrap;
+        }
+        .pace-preset-btn:hover {
+          border-color: #cbd5e1;
+          background: #f8fafc;
+        }
+        .pace-preset-btn.active.slow {
+          border-color: #f97316;
+          background: #ffedd5;
+          color: #c2410c;
+        }
+        .pace-preset-btn.active.normal {
+          border-color: #1e50bc;
+          background: #eff6ff;
+          color: #1e50bc;
+        }
+        .pace-preset-btn.active.fast {
+          border-color: #10b981;
+          background: #ecfdf5;
+          color: #059669;
+        }
+        .pace-preset-btn.active.sprint {
+          border-color: #8b5cf6;
+          background: #f5f3ff;
+          color: #6d28d9;
         }
 
         /* 3. FILTER TABS & SEARCH */

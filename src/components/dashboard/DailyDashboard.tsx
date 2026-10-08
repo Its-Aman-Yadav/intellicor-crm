@@ -1,12 +1,14 @@
 'use client';
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Lead,
   PIPELINE_STAGES,
   PipelineStage,
   WhatsAppTemplate,
   UserDailyTarget,
+  TodoItem,
+  TodoPriority,
 } from '@/types/crm';
 import {
   formatTemplate,
@@ -17,11 +19,13 @@ import {
 import {
   Phone,
   PhoneCall,
+  PhoneForwarded,
   MessageCircle,
   Calendar,
   CheckCircle2,
   TrendingUp,
   AlertCircle,
+  AlertTriangle,
   ArrowRight,
   ExternalLink,
   Flame,
@@ -37,7 +41,17 @@ import {
   Building2,
   Layers,
   Eye,
+  CheckSquare,
+  ListTodo,
+  Plus,
+  Trash2,
+  Check,
+  RotateCcw,
+  User,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
+import { getDailyMotivationalQuote } from '@/data/motivationalQuotes';
 
 interface DailyDashboardProps {
   leads: Lead[];
@@ -52,6 +66,11 @@ interface DailyDashboardProps {
   onViewSheetLeads?: (categoryName: string, sheetName?: string) => void;
   dailyTarget?: UserDailyTarget;
   onOpenTargetModal?: () => void;
+  todos?: TodoItem[];
+  onSaveTodo?: (todo: TodoItem) => void;
+  onToggleTodo?: (todoId: string) => void;
+  onDeleteTodo?: (todoId: string) => void;
+  onUpdateLead?: (lead: Lead) => void;
 }
 
 export default function DailyDashboard({
@@ -67,6 +86,11 @@ export default function DailyDashboard({
   onViewSheetLeads,
   dailyTarget = { contactsTarget: 50, durationMinutesTarget: 120, mode: 'both' },
   onOpenTargetModal,
+  todos = [],
+  onSaveTodo,
+  onToggleTodo,
+  onDeleteTodo,
+  onUpdateLead,
 }: DailyDashboardProps) {
   // Filter leads by rep if not "All Reps"
   const repFilteredLeads = useMemo(() => {
@@ -76,6 +100,55 @@ export default function DailyDashboard({
 
   // Selected date normalization (YYYY-MM-DD)
   const targetDateStr = selectedDate || new Date().toISOString().slice(0, 10);
+
+  // Dynamic Motivational Quote state (rotates 3x daily across 50 quotes with on-demand cycle)
+  const [quoteOffset, setQuoteOffset] = useState<number>(0);
+  const { quote: currentQuote, slotInfo, quoteNumber } = useMemo(() => {
+    return getDailyMotivationalQuote(quoteOffset);
+  }, [quoteOffset]);
+
+  // Formatted date string for human readability
+  const formattedDisplayDate = useMemo(() => {
+    try {
+      const parts = targetDateStr.split('-');
+      if (parts.length === 3) {
+        const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+        return d.toLocaleDateString('en-US', {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+        });
+      }
+    } catch {}
+    return targetDateStr;
+  }, [targetDateStr]);
+
+  const isSelectedDateToday = useMemo(() => {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    return targetDateStr === todayStr;
+  }, [targetDateStr]);
+
+  const handleShiftDate = (days: number) => {
+    try {
+      const parts = targetDateStr.split('-');
+      if (parts.length === 3) {
+        const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+        d.setDate(d.getDate() + days);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        setSelectedDate(`${y}-${m}-${day}`);
+      }
+    } catch {}
+  };
+
+  const repDisplayName = useMemo(() => {
+    if (!activeRep || activeRep === 'All' || activeRep === 'All Reps') {
+      return 'Closer';
+    }
+    return activeRep;
+  }, [activeRep]);
 
   // Compute Daily Funnel Counters (Actuals for today)
   const dailyMetrics = useMemo(() => {
@@ -346,16 +419,146 @@ export default function DailyDashboard({
     return counts;
   }, [repFilteredLeads]);
 
-  // Today's Actionable Tasks:
-  // 1. Follow-up Calls Due Today
-  const callsDueToday = useMemo(() => {
-    return repFilteredLeads.filter((lead) => {
-      if (lead.status === 'Won' || lead.status === 'Lost') return false;
-      return lead.followUpDate === targetDateStr || (!lead.call1Date && lead.status === 'New');
+  // =========================================================
+  // ACTIONABLE TASKS: FOLLOW-UPS, MANUAL TO-DOS & CADENCE
+  // =========================================================
+  const getDaysDiff = (dateStr?: string) => {
+    if (!dateStr) return 0;
+    const target = new Date(targetDateStr).getTime();
+    const d = new Date(dateStr.slice(0, 10)).getTime();
+    return Math.round((target - d) / (1000 * 60 * 60 * 24));
+  };
+
+  // 1. Follow-up Calls & Callbacks
+  const followUpData = useMemo(() => {
+    const overdue: Lead[] = [];
+    const today: Lead[] = [];
+    const callbacks: Lead[] = [];
+    const upcoming: Lead[] = [];
+
+    repFilteredLeads.forEach((lead) => {
+      if (lead.status === 'Won' || lead.status === 'Lost' || lead.callResult === 'Deal Won') return;
+
+      const fDate = lead.followUpDate ? lead.followUpDate.slice(0, 10) : '';
+
+      if (fDate) {
+        if (fDate < targetDateStr) {
+          overdue.push(lead);
+        } else if (fDate === targetDateStr) {
+          today.push(lead);
+        } else {
+          upcoming.push(lead);
+        }
+      } else if (
+        lead.status === 'Follow-up' ||
+        lead.callResult === 'Callback' ||
+        lead.callResult === 'Call Back Later'
+      ) {
+        callbacks.push(lead);
+      }
     });
+
+    // Sort overdue by oldest first
+    overdue.sort((a, b) => (a.followUpDate || '').localeCompare(b.followUpDate || ''));
+    // Sort today by priority/score
+    today.sort((a, b) => (b.score || 0) - (a.score || 0));
+
+    // Actionable follow-ups: Overdue + Today + Callbacks without explicit date
+    const actionable = [...overdue, ...today, ...callbacks];
+
+    return {
+      overdue,
+      today,
+      callbacks,
+      upcoming,
+      actionable,
+    };
   }, [repFilteredLeads, targetDateStr]);
 
-  // 2. WhatsApp Cadence Due Today
+  const [followUpFilter, setFollowUpFilter] = useState<'actionable' | 'today' | 'overdue' | 'callbacks' | 'upcoming'>('actionable');
+
+  const displayedFollowUps = useMemo(() => {
+    switch (followUpFilter) {
+      case 'today':
+        return followUpData.today;
+      case 'overdue':
+        return followUpData.overdue;
+      case 'callbacks':
+        return followUpData.callbacks;
+      case 'upcoming':
+        return followUpData.upcoming;
+      case 'actionable':
+      default:
+        return followUpData.actionable;
+    }
+  }, [followUpData, followUpFilter]);
+
+  // 2. Manual To-Do List state and management
+  const [newTodoTitle, setNewTodoTitle] = useState('');
+  const [newTodoPriority, setNewTodoPriority] = useState<TodoPriority>('MEDIUM');
+  const [newTodoDueDate, setNewTodoDueDate] = useState(targetDateStr);
+  const [todoFilter, setTodoFilter] = useState<'pending' | 'completed' | 'all'>('pending');
+
+  const repTodos = useMemo(() => {
+    if (!todos) return [];
+    if (activeRep === 'All' || activeRep === 'All Reps') return todos;
+    return todos.filter((t) => !t.repName || t.repName === activeRep);
+  }, [todos, activeRep]);
+
+  const filteredTodos = useMemo(() => {
+    if (todoFilter === 'pending') {
+      return repTodos.filter((t) => !t.completed);
+    }
+    if (todoFilter === 'completed') {
+      return repTodos.filter((t) => t.completed);
+    }
+    return repTodos;
+  }, [repTodos, todoFilter]);
+
+  const pendingTodosCount = repTodos.filter((t) => !t.completed).length;
+  const completedTodosCount = repTodos.filter((t) => t.completed).length;
+
+  const handleAddTodoSubmit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!newTodoTitle.trim()) return;
+
+    const newTodo: TodoItem = {
+      id: `todo-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      title: newTodoTitle.trim(),
+      completed: false,
+      priority: newTodoPriority,
+      dueDate: newTodoDueDate || targetDateStr,
+      repName: activeRep !== 'All' && activeRep !== 'All Reps' ? activeRep : undefined,
+      createdAt: new Date().toISOString(),
+    };
+
+    if (onSaveTodo) {
+      onSaveTodo(newTodo);
+    }
+    setNewTodoTitle('');
+    setNewTodoPriority('MEDIUM');
+  };
+
+  const handleQuickRescheduleLead = (lead: Lead, daysToAdd: number) => {
+    const nextDate = new Date(Date.now() + daysToAdd * 86400000).toISOString().slice(0, 10);
+    const updatedLead: Lead = {
+      ...lead,
+      followUpDate: nextDate,
+      status: 'Follow-up',
+      updatedAt: new Date().toISOString(),
+    };
+    if (onUpdateLead) {
+      onUpdateLead(updatedLead);
+    }
+  };
+
+  const createFollowUpWhatsAppLink = (lead: Lead) => {
+    const greeting = lead.ownerName ? `Hi ${lead.ownerName},` : `Hi,`;
+    const msg = `${greeting} following up from our earlier call regarding digital & web presence for ${lead.businessName}. Are you free for a quick 2-minute chat today?`;
+    return createWhatsAppLink(lead.phone, msg);
+  };
+
+  // 3. WhatsApp Cadence Due Today
   const whatsappDueToday = useMemo(() => {
     const items: { lead: Lead; stepLabel: string; purpose: string; day: number; message: string }[] = [];
     repFilteredLeads.forEach((lead) => {
@@ -382,7 +585,7 @@ export default function DailyDashboard({
     return items;
   }, [repFilteredLeads, templates, targetDateStr, activeRep]);
 
-  // 3. Discovery Calls Scheduled Today
+  // 4. Discovery Calls Scheduled Today
   const discoveryCallsToday = useMemo(() => {
     return repFilteredLeads.filter((lead) => {
       return (
@@ -393,45 +596,123 @@ export default function DailyDashboard({
   }, [repFilteredLeads, targetDateStr]);
 
   const totalTasksToday =
-    callsDueToday.length + whatsappDueToday.length + discoveryCallsToday.length;
+    followUpData.actionable.length +
+    pendingTodosCount +
+    discoveryCallsToday.length +
+    whatsappDueToday.length;
 
   return (
     <div className="dashboard-root">
-      {/* Date & Subheader Banner */}
+      {/* Date & Dynamic Motivational Quote Banner */}
       <div className="dashboard-header-banner card">
-        <div className="banner-left">
-          <div className="banner-badge">
+        {/* LEFT: Greeting of the Day & Live Session */}
+        <div className="banner-greeting-col">
+          <div className="banner-live-badge">
             <span className="pulse-dot"></span>
-            <span>Live Sales Cadence</span>
+            <span className="slot-badge-icon">{slotInfo.icon}</span>
+            <span>{slotInfo.label}</span>
+            <span className="cadence-sep">•</span>
+            <span className="cadence-time">{slotInfo.timeRange}</span>
           </div>
-          <h1 className="banner-title">
-            {activeRep === 'All' || activeRep === 'All Reps'
-              ? 'Team Sales Command'
-              : `${activeRep}'s Sales Desk`}
+
+          <h1 className="banner-greeting-title">
+            {slotInfo.greeting},{' '}
+            <span className="greeting-name">{repDisplayName}</span>!
           </h1>
-          <p className="banner-subtext">
-            {totalTasksToday > 0
-              ? `You have ${totalTasksToday} high-priority tasks requiring action today.`
-              : 'All scheduled follow-ups and calls are up to date for this date!'}
-          </p>
+
+          <div className="banner-status-meta">
+            <span className="meta-date">{formattedDisplayDate}</span>
+            <span className="meta-dot">•</span>
+            <span className={`meta-tasks-count ${totalTasksToday > 0 ? 'has-tasks' : 'all-clear'}`}>
+              {totalTasksToday > 0
+                ? `${totalTasksToday} priority tasks due`
+                : '✓ All follow-ups up to date'}
+            </span>
+          </div>
         </div>
 
-        <div className="banner-right">
-          <div className="date-picker-box">
-            <Calendar size={15} className="date-icon" />
-            <input
-              type="date"
-              value={targetDateStr}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              className="dashboard-date-input"
-            />
+        {/* CENTER: Dynamic Motivational Money & Consistency Quote */}
+        <div className="banner-quote-capsule">
+          <div className="quote-top-bar">
+            <div className="quote-theme-tag">
+              <span className="quote-theme-icon">💰</span>
+              <span>{currentQuote.theme}</span>
+            </div>
+            <div className="quote-slot-indicator">
+              <span className="quote-cycle-text">Quote #{quoteNumber} of 50 • Changes 3x Daily</span>
+              <button
+                type="button"
+                onClick={() => setQuoteOffset((prev) => prev + 1)}
+                className="btn-quote-shuffle"
+                title="Shuffle for a fresh quote"
+              >
+                <RotateCcw size={11} className="rotate-icon" />
+                <span>Next</span>
+              </button>
+            </div>
           </div>
-          <button
-            onClick={() => setSelectedDate(new Date().toISOString().slice(0, 10))}
-            className="btn btn-secondary btn-sm"
-          >
-            Today
-          </button>
+
+          <div className="quote-body-wrap">
+            <p className="quote-body-text">
+              &ldquo;{currentQuote.quote}&rdquo;
+            </p>
+          </div>
+
+          <div className="quote-footer-bar">
+            <span className="quote-author-tag">— {currentQuote.author}</span>
+            <span className="quote-slot-name">
+              {slotInfo.icon} {slotInfo.label} Edition
+            </span>
+          </div>
+        </div>
+
+        {/* RIGHT: Compact, Sleek Date Controller */}
+        <div className="banner-date-col">
+          <div className="date-controller-card">
+            <div className="date-controller-header">
+              <span className="date-ctrl-label">Date Filter</span>
+              {isSelectedDateToday ? (
+                <span className="date-today-badge active">Today</span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setSelectedDate(new Date().toISOString().slice(0, 10))}
+                  className="btn-jump-today"
+                  title="Jump to today's date"
+                >
+                  Jump to Today
+                </button>
+              )}
+            </div>
+
+            <div className="date-picker-nav-row">
+              <button
+                type="button"
+                onClick={() => handleShiftDate(-1)}
+                className="btn-date-nav"
+                title="Previous Day"
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <div className="date-picker-box">
+                <Calendar size={13} className="date-icon" />
+                <input
+                  type="date"
+                  value={targetDateStr}
+                  onChange={(e) => setSelectedDate(e.target.value)}
+                  className="dashboard-date-input"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => handleShiftDate(1)}
+                className="btn-date-nav"
+                title="Next Day"
+              >
+                <ChevronRight size={14} />
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -772,16 +1053,397 @@ export default function DailyDashboard({
         <div>
           <h2 className="section-title">Today&apos;s Actionable Task List</h2>
           <p className="section-sub">
-            Prioritized calling queue, scheduled discovery demos, and WhatsApp follow-up reminders
+            Follow-up callbacks queue, manual to-do planner, scheduled discovery demos, and WhatsApp reminders
           </p>
         </div>
-        <span className="badge badge-warm">
-          {totalTasksToday} tasks scheduled for {targetDateStr}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <span className="badge badge-warm">
+            {totalTasksToday} actionable items for {targetDateStr}
+          </span>
+          {followUpData.overdue.length > 0 && (
+            <span className="badge badge-urgent-pulse">
+              <AlertTriangle size={12} /> {followUpData.overdue.length} Overdue Callbacks
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="tasks-layout-grid">
-        {/* Task Box 1: Scheduled Discovery Calls */}
+        {/* ========================================================================= */}
+        {/* TASK BOX 1: FOLLOW-UPS TO CALL (Calls & Callbacks Due) */}
+        {/* ========================================================================= */}
+        <div className="card task-column-card">
+          <div className="task-col-header">
+            <div className="task-col-title-group">
+              <PhoneForwarded size={17} className="col-icon calls" />
+              <div>
+                <h3 className="task-col-title">Follow-ups &amp; Callbacks to Call</h3>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              {followUpData.overdue.length > 0 && (
+                <span className="col-counter overdue-alert" title="Overdue follow-ups needing immediate call">
+                  {followUpData.overdue.length} Overdue
+                </span>
+              )}
+              <span className="col-counter">{displayedFollowUps.length}</span>
+            </div>
+          </div>
+
+          {/* Sub-filter tabs for Follow-ups */}
+          <div className="followup-filter-bar">
+            <button
+              onClick={() => setFollowUpFilter('actionable')}
+              className={`filter-pill-btn ${followUpFilter === 'actionable' ? 'is-active' : ''}`}
+            >
+              Due &amp; Overdue ({followUpData.actionable.length})
+            </button>
+            <button
+              onClick={() => setFollowUpFilter('today')}
+              className={`filter-pill-btn ${followUpFilter === 'today' ? 'is-active' : ''}`}
+            >
+              Today ({followUpData.today.length})
+            </button>
+            {followUpData.overdue.length > 0 && (
+              <button
+                onClick={() => setFollowUpFilter('overdue')}
+                className={`filter-pill-btn is-overdue-pill ${followUpFilter === 'overdue' ? 'is-active' : ''}`}
+              >
+                ⚠️ Overdue ({followUpData.overdue.length})
+              </button>
+            )}
+            <button
+              onClick={() => setFollowUpFilter('callbacks')}
+              className={`filter-pill-btn ${followUpFilter === 'callbacks' ? 'is-active' : ''}`}
+            >
+              Callbacks ({followUpData.callbacks.length})
+            </button>
+            {followUpData.upcoming.length > 0 && (
+              <button
+                onClick={() => setFollowUpFilter('upcoming')}
+                className={`filter-pill-btn ${followUpFilter === 'upcoming' ? 'is-active' : ''}`}
+              >
+                Upcoming ({followUpData.upcoming.length})
+              </button>
+            )}
+          </div>
+
+          <div className="task-list">
+            {displayedFollowUps.length === 0 ? (
+              <div className="empty-task-placeholder">
+                <CheckCircle2 size={28} className="empty-icon" />
+                <p style={{ fontWeight: 600, color: 'var(--brand-navy)' }}>
+                  All follow-up callbacks cleared!
+                </p>
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                  No pending follow-ups in this filter for {targetDateStr}.
+                </span>
+                <button
+                  onClick={onOpenNewLead}
+                  className="btn btn-secondary btn-sm"
+                  style={{ marginTop: '0.5rem' }}
+                >
+                  <Plus size={13} /> Add New Lead
+                </button>
+              </div>
+            ) : (
+              displayedFollowUps.map((lead) => {
+                const diffDays = getDaysDiff(lead.followUpDate);
+                const isOverdueLead = lead.followUpDate && diffDays > 0;
+                const isTodayLead = lead.followUpDate && diffDays === 0;
+                const isUpcomingLead = lead.followUpDate && diffDays < 0;
+                const waLink = createFollowUpWhatsAppLink(lead);
+
+                return (
+                  <div key={lead.id} className={`task-item-card ${isOverdueLead ? 'border-overdue-lead' : ''}`}>
+                    <div className="task-item-header">
+                      <div>
+                        <span
+                          className="task-business-name cursor-pointer"
+                          onClick={() => onOpenLead(lead)}
+                          title="Click to view lead details"
+                        >
+                          {lead.businessName}
+                        </span>
+                        <div className="task-owner-meta">
+                          {lead.ownerName ? `${lead.ownerName} • ` : ''}
+                          <span style={{ fontFamily: 'monospace' }}>{lead.phone}</span>
+                          {lead.city && <span> • {lead.city}</span>}
+                        </div>
+                      </div>
+                      <span
+                        className={`badge ${
+                          lead.priority === 'HOT'
+                            ? 'badge-hot'
+                            : lead.priority === 'WARM'
+                            ? 'badge-warm'
+                            : 'badge-cold'
+                        }`}
+                      >
+                        {lead.priority} ({lead.score})
+                      </span>
+                    </div>
+
+                    {/* Urgency and Follow-up Badge */}
+                    <div className="task-meta-row">
+                      {isOverdueLead && (
+                        <span className="urgency-tag-overdue">
+                          <AlertTriangle size={11} /> {diffDays} {diffDays === 1 ? 'day' : 'days'} overdue ({lead.followUpDate})
+                        </span>
+                      )}
+                      {isTodayLead && (
+                        <span className="urgency-tag-today">
+                          <Clock size={11} /> Due Today {lead.followUpTime ? `@ ${lead.followUpTime}` : ''}
+                        </span>
+                      )}
+                      {!lead.followUpDate && (
+                        <span className="urgency-tag-callback">
+                          <PhoneCall size={11} /> Callback Requested
+                        </span>
+                      )}
+                      {isUpcomingLead && (
+                        <span className="urgency-tag-upcoming">
+                          <Calendar size={11} /> Scheduled for {lead.followUpDate}
+                        </span>
+                      )}
+                      <span className={`stage-pill ${lead.status.replace(/\s+/g, '')}`}>
+                        {lead.status}
+                      </span>
+                    </div>
+
+                    {/* Note / Context snippet */}
+                    {(lead.notes || lead.requirement) && (
+                      <p className="task-requirement-snippet">
+                        &quot;{lead.notes || lead.requirement}&quot;
+                      </p>
+                    )}
+
+                    {/* Action buttons */}
+                    <div className="task-actions-row">
+                      <button
+                        onClick={() => onQuickCall(lead)}
+                        className="btn btn-primary btn-sm"
+                        title="Open Quick Dial & Log Screen"
+                      >
+                        <PhoneCall size={13} /> Call Now
+                      </button>
+                      <a
+                        href={waLink}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="btn btn-sm wa-send-btn"
+                        title="Send warm follow-up WhatsApp message"
+                      >
+                        <MessageCircle size={13} /> WhatsApp
+                      </a>
+                      <a
+                        href={`tel:${cleanPhoneNumber(lead.phone)}`}
+                        className="btn btn-secondary btn-sm"
+                        title="Direct Phone Call"
+                      >
+                        <Phone size={13} /> Dial
+                      </a>
+
+                      {/* Quick reschedule options */}
+                      <div className="reschedule-dropdown-wrap">
+                        <button
+                          onClick={() => handleQuickRescheduleLead(lead, 1)}
+                          className="btn btn-secondary btn-sm"
+                          title="Postpone follow-up to tomorrow"
+                        >
+                          +1d
+                        </button>
+                        <button
+                          onClick={() => handleQuickRescheduleLead(lead, 2)}
+                          className="btn btn-secondary btn-sm"
+                          title="Postpone follow-up by 2 days"
+                        >
+                          +2d
+                        </button>
+                      </div>
+
+                      <button
+                        onClick={() => onOpenLead(lead)}
+                        className="btn btn-secondary btn-sm"
+                        title="View Full Lead Profile"
+                      >
+                        Details
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        {/* ========================================================================= */}
+        {/* TASK BOX 2: MANUAL TO-DO LIST SECTION */}
+        {/* ========================================================================= */}
+        <div className="card task-column-card">
+          <div className="task-col-header">
+            <div className="task-col-title-group">
+              <ListTodo size={17} className="col-icon todos" />
+              <div>
+                <h3 className="task-col-title">Manual To-Do List</h3>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <span className="col-counter todos-counter">{pendingTodosCount} Pending</span>
+            </div>
+          </div>
+
+          {/* Quick Add To-Do Input Form */}
+          <form onSubmit={handleAddTodoSubmit} className="todo-quick-add-form">
+            <div className="todo-input-wrap">
+              <input
+                type="text"
+                placeholder="Add a new to-do (e.g. Send updated pricing to Sunil)..."
+                value={newTodoTitle}
+                onChange={(e) => setNewTodoTitle(e.target.value)}
+                className="todo-text-input"
+              />
+            </div>
+            <div className="todo-form-controls">
+              <select
+                value={newTodoPriority}
+                onChange={(e) => setNewTodoPriority(e.target.value as TodoPriority)}
+                className="todo-priority-select"
+                title="Priority"
+              >
+                <option value="HIGH">🔥 High Priority</option>
+                <option value="MEDIUM">⚡ Medium</option>
+                <option value="LOW">🌱 Low</option>
+              </select>
+
+              <input
+                type="date"
+                value={newTodoDueDate}
+                onChange={(e) => setNewTodoDueDate(e.target.value)}
+                className="todo-date-input"
+                title="Due Date"
+              />
+
+              <button
+                type="submit"
+                disabled={!newTodoTitle.trim()}
+                className="btn btn-primary btn-sm todo-add-btn"
+              >
+                <Plus size={14} /> Add Task
+              </button>
+            </div>
+          </form>
+
+          {/* Filter Pills for To-Dos */}
+          <div className="followup-filter-bar">
+            <button
+              onClick={() => setTodoFilter('pending')}
+              className={`filter-pill-btn ${todoFilter === 'pending' ? 'is-active' : ''}`}
+            >
+              Pending ({pendingTodosCount})
+            </button>
+            <button
+              onClick={() => setTodoFilter('completed')}
+              className={`filter-pill-btn ${todoFilter === 'completed' ? 'is-active' : ''}`}
+            >
+              Completed ({completedTodosCount})
+            </button>
+            <button
+              onClick={() => setTodoFilter('all')}
+              className={`filter-pill-btn ${todoFilter === 'all' ? 'is-active' : ''}`}
+            >
+              All Tasks ({repTodos.length})
+            </button>
+          </div>
+
+          <div className="task-list">
+            {filteredTodos.length === 0 ? (
+              <div className="empty-task-placeholder">
+                <CheckCircle2 size={28} className="empty-icon" />
+                <p style={{ fontWeight: 600, color: 'var(--brand-navy)' }}>
+                  {todoFilter === 'completed' ? 'No completed tasks yet' : 'All manual to-dos completed!'}
+                </p>
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                  {todoFilter === 'completed'
+                    ? 'Check off tasks above to see them in this history.'
+                    : 'Type a task above and press Enter to keep your daily sales agenda organized.'}
+                </span>
+              </div>
+            ) : (
+              filteredTodos.map((todo) => {
+                const diffDays = getDaysDiff(todo.dueDate);
+                const isOverdueTodo = !todo.completed && todo.dueDate && diffDays > 0;
+                const isTodayTodo = !todo.completed && todo.dueDate && diffDays === 0;
+
+                return (
+                  <div
+                    key={todo.id}
+                    className={`todo-item-card ${todo.completed ? 'is-done-card' : ''}`}
+                  >
+                    <div className="todo-item-main">
+                      <button
+                        type="button"
+                        onClick={() => onToggleTodo && onToggleTodo(todo.id)}
+                        className={`todo-custom-checkbox ${todo.completed ? 'checked' : ''}`}
+                        title={todo.completed ? 'Mark uncompleted' : 'Mark completed'}
+                      >
+                        {todo.completed && <Check size={12} className="check-mark" />}
+                      </button>
+
+                      <div className="todo-content-col">
+                        <span className={`todo-title ${todo.completed ? 'is-strikethrough' : ''}`}>
+                          {todo.title}
+                        </span>
+
+                        <div className="todo-meta-tags">
+                          <span className={`todo-priority-badge ${todo.priority.toLowerCase()}`}>
+                            {todo.priority === 'HIGH' ? '🔥 HIGH' : todo.priority === 'MEDIUM' ? '⚡ MED' : '🌱 LOW'}
+                          </span>
+
+                          {todo.dueDate && (
+                            <span
+                              className={`todo-date-badge ${
+                                isOverdueTodo ? 'is-overdue' : isTodayTodo ? 'is-today' : ''
+                              }`}
+                            >
+                              <Calendar size={10} />
+                              {isOverdueTodo
+                                ? `Overdue (${todo.dueDate})`
+                                : isTodayTodo
+                                ? 'Due Today'
+                                : todo.dueDate}
+                            </span>
+                          )}
+
+                          {todo.completedAt && (
+                            <span className="todo-completed-time">
+                              Done {new Date(todo.completedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="todo-item-actions">
+                      <button
+                        type="button"
+                        onClick={() => onDeleteTodo && onDeleteTodo(todo.id)}
+                        className="todo-delete-btn"
+                        title="Delete task"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        {/* ========================================================================= */}
+        {/* TASK BOX 3: SCHEDULED DISCOVERY CALLS */}
+        {/* ========================================================================= */}
         <div className="card task-column-card">
           <div className="task-col-header">
             <div className="task-col-title-group">
@@ -852,91 +1514,9 @@ export default function DailyDashboard({
           </div>
         </div>
 
-        {/* Task Box 2: Calls Due Today */}
-        <div className="card task-column-card">
-          <div className="task-col-header">
-            <div className="task-col-title-group">
-              <PhoneCall size={17} className="col-icon calls" />
-              <h3 className="task-col-title">Calls &amp; Callbacks Due</h3>
-            </div>
-            <span className="col-counter">{callsDueToday.length}</span>
-          </div>
-
-          <div className="task-list">
-            {callsDueToday.length === 0 ? (
-              <div className="empty-task-placeholder">
-                <CheckCircle2 size={24} className="empty-icon" />
-                <p>All calls &amp; follow-up callbacks cleared!</p>
-              </div>
-            ) : (
-              callsDueToday.map((lead) => {
-                const isNew = lead.status === 'New' && !lead.call1Date;
-                return (
-                  <div key={lead.id} className="task-item-card">
-                    <div className="task-item-header">
-                      <div>
-                        <span className="task-business-name">{lead.businessName}</span>
-                        <div className="task-owner-meta">
-                          {lead.ownerName || 'Contact'} • {lead.phone}
-                        </div>
-                      </div>
-                      <span
-                        className={`badge ${
-                          lead.priority === 'HOT'
-                            ? 'badge-hot'
-                            : lead.priority === 'WARM'
-                            ? 'badge-warm'
-                            : 'badge-cold'
-                        }`}
-                      >
-                        {lead.priority} ({lead.score})
-                      </span>
-                    </div>
-
-                    <div className="task-meta-row">
-                      <span className={`stage-pill ${lead.status.replace(/\s+/g, '')}`}>
-                        {lead.status}
-                      </span>
-                      {isNew ? (
-                        <span className="task-tag-new">First Call Needed</span>
-                      ) : (
-                        <span className="task-tag-callback">Follow-up Call</span>
-                      )}
-                    </div>
-
-                    {lead.notes && (
-                      <p className="task-requirement-snippet">&quot;{lead.notes}&quot;</p>
-                    )}
-
-                    <div className="task-actions-row">
-                      <button
-                        onClick={() => onQuickCall(lead)}
-                        className="btn btn-primary btn-sm"
-                      >
-                        <PhoneCall size={13} /> Log Call
-                      </button>
-                      <a
-                        href={`tel:${cleanPhoneNumber(lead.phone)}`}
-                        className="btn btn-secondary btn-sm"
-                        title="Direct Dial"
-                      >
-                        <Phone size={13} /> Dial
-                      </a>
-                      <button
-                        onClick={() => onOpenLead(lead)}
-                        className="btn btn-secondary btn-sm"
-                      >
-                        Details
-                      </button>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
-
-        {/* Task Box 3: WhatsApp Cadence Due */}
+        {/* ========================================================================= */}
+        {/* TASK BOX 4: WHATSAPP CADENCE DUE */}
+        {/* ========================================================================= */}
         <div className="card task-column-card">
           <div className="task-col-header">
             <div className="task-col-title-group">
@@ -1301,62 +1881,278 @@ export default function DailyDashboard({
           font-size: 0.9rem;
         }
         .dashboard-header-banner {
-          padding: 1.25rem 1.5rem;
+          padding: 1rem 1.25rem;
+          display: grid;
+          grid-template-columns: minmax(240px, 300px) 1fr minmax(210px, 240px);
+          align-items: center;
+          gap: 1.25rem;
+          background: linear-gradient(135deg, #ffffff 0%, #f8faff 100%);
+          border: 1px solid #e2e8f0;
+          border-left: 4px solid var(--brand-blue, #1e50bc);
+          border-radius: 16px;
+          box-shadow: 0 2px 10px rgba(0, 0, 0, 0.02);
+        }
+
+        /* 1. GREETING COLUMN */
+        .banner-greeting-col {
+          display: flex;
+          flex-direction: column;
+          gap: 0.25rem;
+        }
+        .banner-live-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.35rem;
+          font-size: 0.7rem;
+          font-weight: 700;
+          color: #1e50bc;
+          background: #eff6ff;
+          border: 1px solid #bfdbfe;
+          padding: 0.15rem 0.55rem;
+          border-radius: 999px;
+          width: fit-content;
+        }
+        .slot-badge-icon {
+          font-size: 0.78rem;
+          line-height: 1;
+        }
+        .cadence-sep {
+          color: #93c5fd;
+          font-size: 0.65rem;
+        }
+        .cadence-time {
+          color: #64748b;
+          font-weight: 600;
+          font-size: 0.68rem;
+        }
+        .banner-greeting-title {
+          font-size: 1.25rem;
+          font-weight: 800;
+          color: #0b1d33;
+          line-height: 1.2;
+          margin: 0;
+          letter-spacing: -0.01em;
+        }
+        .greeting-name {
+          color: #1e50bc;
+        }
+        .banner-status-meta {
+          display: flex;
+          align-items: center;
+          gap: 0.4rem;
+          font-size: 0.76rem;
+          color: #64748b;
+          font-weight: 500;
+          flex-wrap: wrap;
+        }
+        .meta-date {
+          color: #334155;
+          font-weight: 600;
+        }
+        .meta-dot {
+          color: #cbd5e1;
+          font-size: 0.65rem;
+        }
+        .meta-tasks-count.has-tasks {
+          color: #d97706;
+          font-weight: 700;
+        }
+        .meta-tasks-count.all-clear {
+          color: #059669;
+          font-weight: 700;
+        }
+
+        /* 2. DYNAMIC MOTIVATIONAL QUOTE CAPSULE */
+        .banner-quote-capsule {
+          background: linear-gradient(135deg, #ffffff 0%, #fffdf5 100%);
+          border: 1px solid #fde68a;
+          border-radius: 12px;
+          padding: 0.65rem 0.95rem;
+          box-shadow: 0 1px 4px rgba(245, 158, 11, 0.05);
+          display: flex;
+          flex-direction: column;
+          gap: 0.35rem;
+        }
+        .quote-top-bar {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          background: linear-gradient(135deg, #ffffff 0%, #f0f7ff 100%);
-          border-left: 4px solid var(--brand-blue);
-          gap: 1.5rem;
-        }
-        .banner-badge {
-          display: inline-flex;
-          align-items: center;
-          gap: 0.4rem;
-          font-size: 0.72rem;
-          font-weight: 600;
-          color: var(--brand-blue);
-          background: #eff6ff;
-          border: 1px solid var(--brand-border);
-          padding: 0.15rem 0.5rem;
-          border-radius: var(--radius-full);
-          margin-bottom: 0.4rem;
-        }
-        .banner-title {
-          font-size: 1.35rem;
-          font-weight: 700;
-          color: var(--brand-navy);
-          margin-bottom: 0.2rem;
-        }
-        .banner-subtext {
-          font-size: 0.85rem;
-          color: var(--text-secondary);
-        }
-        .banner-right {
-          display: flex;
-          align-items: center;
           gap: 0.5rem;
         }
-        .date-picker-box {
+        .quote-theme-tag {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.25rem;
+          font-size: 0.68rem;
+          font-weight: 700;
+          color: #92400e;
+          background: #fef3c7;
+          padding: 0.12rem 0.45rem;
+          border-radius: 999px;
+          letter-spacing: 0.02em;
+        }
+        .quote-theme-icon {
+          font-size: 0.72rem;
+          line-height: 1;
+        }
+        .quote-slot-indicator {
           display: flex;
           align-items: center;
           gap: 0.4rem;
+        }
+        .quote-cycle-text {
+          font-size: 0.66rem;
+          color: #94a3b8;
+          font-weight: 600;
+        }
+        .btn-quote-shuffle {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.25rem;
           background: #ffffff;
-          border: 1px solid var(--border);
-          padding: 0.35rem 0.6rem;
-          border-radius: var(--radius-sm);
+          border: 1px solid #cbd5e1;
+          border-radius: 6px;
+          padding: 0.12rem 0.45rem;
+          font-size: 0.67rem;
+          font-weight: 700;
+          color: #475569;
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+        .btn-quote-shuffle:hover {
+          background: #eff6ff;
+          border-color: #93c5fd;
+          color: #1e50bc;
+        }
+        .rotate-icon {
+          color: #64748b;
+        }
+        .quote-body-wrap {
+          margin: 0.1rem 0;
+        }
+        .quote-body-text {
+          font-size: 0.82rem;
+          font-weight: 600;
+          color: #1e293b;
+          line-height: 1.38;
+          font-style: italic;
+          margin: 0;
+        }
+        .quote-footer-bar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          font-size: 0.67rem;
+          color: #64748b;
+          font-weight: 600;
+        }
+        .quote-author-tag {
+          color: #475569;
+          font-weight: 700;
+        }
+        .quote-slot-name {
+          color: #b45309;
+          font-weight: 700;
+        }
+
+        /* 3. DATE CONTROLLER COLUMN */
+        .banner-date-col {
+          display: flex;
+          flex-direction: column;
+        }
+        .date-controller-card {
+          background: #ffffff;
+          border: 1px solid #e2e8f0;
+          border-radius: 12px;
+          padding: 0.55rem 0.7rem;
+          display: flex;
+          flex-direction: column;
+          gap: 0.35rem;
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+        }
+        .date-controller-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+        .date-ctrl-label {
+          font-size: 0.68rem;
+          font-weight: 700;
+          color: #64748b;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+        }
+        .date-today-badge.active {
+          font-size: 0.66rem;
+          font-weight: 700;
+          color: #059669;
+          background: #ecfdf5;
+          border: 1px solid #a7f3d0;
+          padding: 0.08rem 0.45rem;
+          border-radius: 999px;
+        }
+        .btn-jump-today {
+          font-size: 0.66rem;
+          font-weight: 700;
+          color: #1e50bc;
+          background: #eff6ff;
+          border: 1px solid #bfdbfe;
+          padding: 0.1rem 0.45rem;
+          border-radius: 5px;
+          cursor: pointer;
+          transition: all 0.15s;
+        }
+        .btn-jump-today:hover {
+          background: #dbeafe;
+        }
+        .date-picker-nav-row {
+          display: flex;
+          align-items: center;
+          gap: 0.3rem;
+        }
+        .btn-date-nav {
+          width: 26px;
+          height: 26px;
+          border-radius: 6px;
+          border: 1px solid #cbd5e1;
+          background: #ffffff;
+          color: #475569;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          transition: all 0.15s;
+          flex-shrink: 0;
+        }
+        .btn-date-nav:hover {
+          background: #f8fafc;
+          border-color: #94a3b8;
+          color: #0b1d33;
+        }
+        .date-picker-box {
+          flex: 1;
+          display: flex;
+          align-items: center;
+          gap: 0.35rem;
+          background: #f8fafc;
+          border: 1px solid #cbd5e1;
+          padding: 0.18rem 0.45rem;
+          border-radius: 6px;
+          height: 26px;
         }
         .date-icon {
-          color: var(--text-muted);
+          color: #64748b;
+          flex-shrink: 0;
         }
         .dashboard-date-input {
           border: none;
           outline: none;
-          font-size: 0.83rem;
-          font-weight: 500;
-          color: var(--text-primary);
+          font-size: 0.77rem;
+          font-weight: 600;
+          color: #0b1d33;
           background: transparent;
           cursor: pointer;
+          width: 100%;
         }
         .section-title-row {
           display: flex;
@@ -1541,51 +2337,106 @@ export default function DailyDashboard({
         }
         .tasks-layout-grid {
           display: grid;
-          grid-template-columns: repeat(3, 1fr);
-          gap: 1rem;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 1.25rem;
         }
         .task-column-card {
-          padding: 1rem;
+          padding: 1.15rem;
           display: flex;
           flex-direction: column;
           gap: 0.85rem;
-          min-height: 380px;
+          min-height: 440px;
+          border: 1px solid #e2e8f0;
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+          border-radius: 12px;
+          background: #ffffff;
         }
         .task-col-header {
           display: flex;
           align-items: center;
           justify-content: space-between;
           border-bottom: 1px solid var(--border-subtle);
-          padding-bottom: 0.65rem;
+          padding-bottom: 0.75rem;
         }
         .task-col-title-group {
           display: flex;
           align-items: center;
-          gap: 0.45rem;
+          gap: 0.5rem;
         }
         .col-icon.discovery { color: #ec4899; }
         .col-icon.calls { color: #2563eb; }
         .col-icon.whatsapp { color: #10b981; }
+        .col-icon.todos { color: #6366f1; }
         .task-col-title {
-          font-size: 0.88rem;
+          font-size: 0.95rem;
           font-weight: 700;
           color: var(--brand-navy);
+          margin: 0;
         }
         .col-counter {
           background: #f1f5f9;
           color: var(--text-secondary);
           font-size: 0.75rem;
           font-weight: 700;
-          padding: 0.15rem 0.5rem;
+          padding: 0.2rem 0.6rem;
           border-radius: var(--radius-full);
         }
+        .col-counter.overdue-alert {
+          background: #fee2e2;
+          color: #b91c1c;
+          border: 1px solid #fca5a5;
+          animation: pulse 2s infinite;
+        }
+        .col-counter.todos-counter {
+          background: #e0e7ff;
+          color: #4338ca;
+        }
+
+        /* Follow-up Sub-filter bar */
+        .followup-filter-bar {
+          display: flex;
+          align-items: center;
+          gap: 0.35rem;
+          flex-wrap: wrap;
+          padding-bottom: 0.25rem;
+        }
+        .filter-pill-btn {
+          font-size: 0.72rem;
+          font-weight: 600;
+          padding: 0.2rem 0.55rem;
+          border-radius: 99px;
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+          color: var(--text-secondary);
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+        .filter-pill-btn:hover {
+          background: #f1f5f9;
+          border-color: #cbd5e1;
+        }
+        .filter-pill-btn.is-active {
+          background: #0f172a;
+          color: #ffffff;
+          border-color: #0f172a;
+        }
+        .filter-pill-btn.is-overdue-pill {
+          color: #dc2626;
+          border-color: #fecaca;
+        }
+        .filter-pill-btn.is-overdue-pill.is-active {
+          background: #dc2626;
+          color: #ffffff;
+          border-color: #dc2626;
+        }
+
         .task-list {
           display: flex;
           flex-direction: column;
           gap: 0.75rem;
           overflow-y: auto;
           max-height: 480px;
-          padding-right: 0.2rem;
+          padding-right: 0.25rem;
         }
         .empty-task-placeholder {
           display: flex;
@@ -1595,12 +2446,12 @@ export default function DailyDashboard({
           padding: 3rem 1rem;
           text-align: center;
           color: var(--text-muted);
-          gap: 0.6rem;
+          gap: 0.5rem;
           font-size: 0.83rem;
         }
         .empty-icon {
           color: #10b981;
-          opacity: 0.7;
+          opacity: 0.8;
         }
         .task-item-card {
           background: #ffffff;
@@ -1617,6 +2468,10 @@ export default function DailyDashboard({
           border-color: #cbd5e1;
           box-shadow: var(--shadow-sm);
         }
+        .task-item-card.border-overdue-lead {
+          border-left: 3.5px solid #ef4444;
+          background: #fffafa;
+        }
         .task-item-header {
           display: flex;
           align-items: flex-start;
@@ -1625,13 +2480,74 @@ export default function DailyDashboard({
         }
         .task-business-name {
           font-weight: 700;
-          font-size: 0.88rem;
+          font-size: 0.9rem;
           color: var(--brand-navy);
           display: block;
+        }
+        .cursor-pointer {
+          cursor: pointer;
+        }
+        .cursor-pointer:hover {
+          color: #2563eb;
+          text-decoration: underline;
         }
         .task-owner-meta {
           font-size: 0.75rem;
           color: var(--text-muted);
+          margin-top: 0.1rem;
+        }
+        .task-meta-row {
+          display: flex;
+          align-items: center;
+          gap: 0.45rem;
+          flex-wrap: wrap;
+        }
+        .urgency-tag-overdue {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.25rem;
+          font-size: 0.7rem;
+          font-weight: 700;
+          color: #dc2626;
+          background: #fee2e2;
+          padding: 0.15rem 0.45rem;
+          border-radius: 4px;
+          border: 1px solid #fca5a5;
+        }
+        .urgency-tag-today {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.25rem;
+          font-size: 0.7rem;
+          font-weight: 700;
+          color: #047857;
+          background: #ecfdf5;
+          padding: 0.15rem 0.45rem;
+          border-radius: 4px;
+          border: 1px solid #a7f3d0;
+        }
+        .urgency-tag-callback {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.25rem;
+          font-size: 0.7rem;
+          font-weight: 700;
+          color: #b45309;
+          background: #fef3c7;
+          padding: 0.15rem 0.45rem;
+          border-radius: 4px;
+          border: 1px solid #fde68a;
+        }
+        .urgency-tag-upcoming {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.25rem;
+          font-size: 0.7rem;
+          font-weight: 600;
+          color: #475569;
+          background: #f1f5f9;
+          padding: 0.15rem 0.45rem;
+          border-radius: 4px;
         }
         .task-time-row {
           display: flex;
@@ -1644,18 +2560,13 @@ export default function DailyDashboard({
           border-radius: 4px;
         }
         .task-requirement-snippet {
-          font-size: 0.75rem;
+          font-size: 0.76rem;
           color: var(--text-secondary);
           font-style: italic;
           background: #f8fafc;
-          padding: 0.35rem 0.5rem;
+          padding: 0.4rem 0.55rem;
           border-radius: 4px;
-          border-left: 2px solid var(--border);
-        }
-        .task-meta-row {
-          display: flex;
-          align-items: center;
-          gap: 0.45rem;
+          border-left: 2px solid #cbd5e1;
         }
         .task-tag-new {
           font-size: 0.7rem;
@@ -1710,6 +2621,24 @@ export default function DailyDashboard({
           align-items: center;
           gap: 0.4rem;
           margin-top: 0.2rem;
+          flex-wrap: wrap;
+        }
+        .reschedule-dropdown-wrap {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.2rem;
+        }
+        .reschedule-dropdown-wrap button {
+          padding: 0.2rem 0.45rem;
+          font-size: 0.72rem;
+          font-weight: 700;
+          background: #f1f5f9;
+          border: 1px solid #e2e8f0;
+          color: #475569;
+        }
+        .reschedule-dropdown-wrap button:hover {
+          background: #e2e8f0;
+          color: #0f172a;
         }
         .wa-send-btn {
           background: #10b981;
@@ -1720,15 +2649,232 @@ export default function DailyDashboard({
           background: #059669;
           border-color: #059669;
         }
+        .badge-urgent-pulse {
+          background: #fee2e2;
+          color: #dc2626;
+          border: 1px solid #fca5a5;
+          font-weight: 700;
+          display: inline-flex;
+          align-items: center;
+          gap: 0.3rem;
+          animation: pulse 2s infinite;
+        }
+
+        /* ========================================================= */
+        /* MANUAL TO-DO LIST STYLES */
+        /* ========================================================= */
+        .todo-quick-add-form {
+          display: flex;
+          flex-direction: column;
+          gap: 0.45rem;
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          padding: 0.65rem;
+        }
+        .todo-input-wrap {
+          width: 100%;
+        }
+        .todo-text-input {
+          width: 100%;
+          padding: 0.45rem 0.65rem;
+          font-size: 0.82rem;
+          border: 1px solid #cbd5e1;
+          border-radius: 6px;
+          outline: none;
+          background: #ffffff;
+          transition: border-color 0.15s ease;
+        }
+        .todo-text-input:focus {
+          border-color: #6366f1;
+          box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+        }
+        .todo-form-controls {
+          display: flex;
+          align-items: center;
+          gap: 0.4rem;
+          flex-wrap: wrap;
+        }
+        .todo-priority-select {
+          padding: 0.35rem 0.5rem;
+          font-size: 0.74rem;
+          border: 1px solid #cbd5e1;
+          border-radius: 5px;
+          background: #ffffff;
+          color: #334155;
+          outline: none;
+          cursor: pointer;
+        }
+        .todo-date-input {
+          padding: 0.3rem 0.45rem;
+          font-size: 0.74rem;
+          border: 1px solid #cbd5e1;
+          border-radius: 5px;
+          background: #ffffff;
+          color: #334155;
+          outline: none;
+        }
+        .todo-add-btn {
+          padding: 0.35rem 0.75rem;
+          font-size: 0.78rem;
+          margin-left: auto;
+          background: #4f46e5;
+          border-color: #4f46e5;
+        }
+        .todo-add-btn:hover {
+          background: #4338ca;
+        }
+
+        .todo-item-card {
+          background: #ffffff;
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          padding: 0.75rem 0.85rem;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 0.65rem;
+          transition: all 0.15s ease;
+        }
+        .todo-item-card:hover {
+          border-color: #cbd5e1;
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+        }
+        .todo-item-card.is-done-card {
+          background: #fafaf9;
+          border-color: #f1f5f9;
+          opacity: 0.75;
+        }
+        .todo-item-main {
+          display: flex;
+          align-items: flex-start;
+          gap: 0.65rem;
+          flex: 1;
+        }
+        .todo-custom-checkbox {
+          width: 20px;
+          height: 20px;
+          min-width: 20px;
+          border-radius: 6px;
+          border: 1.5px solid #cbd5e1;
+          background: #ffffff;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          margin-top: 0.15rem;
+          transition: all 0.15s ease;
+          padding: 0;
+        }
+        .todo-custom-checkbox:hover {
+          border-color: #10b981;
+          background: #ecfdf5;
+        }
+        .todo-custom-checkbox.checked {
+          background: #10b981;
+          border-color: #10b981;
+          color: #ffffff;
+        }
+        .check-mark {
+          stroke-width: 3;
+        }
+        .todo-content-col {
+          display: flex;
+          flex-direction: column;
+          gap: 0.3rem;
+          flex: 1;
+        }
+        .todo-title {
+          font-size: 0.84rem;
+          font-weight: 600;
+          color: #1e293b;
+          line-height: 1.35;
+          word-break: break-word;
+        }
+        .todo-title.is-strikethrough {
+          text-decoration: line-through;
+          color: #94a3b8;
+        }
+        .todo-meta-tags {
+          display: flex;
+          align-items: center;
+          gap: 0.45rem;
+          flex-wrap: wrap;
+        }
+        .todo-priority-badge {
+          font-size: 0.68rem;
+          font-weight: 700;
+          padding: 0.1rem 0.4rem;
+          border-radius: 4px;
+        }
+        .todo-priority-badge.high {
+          background: #fee2e2;
+          color: #dc2626;
+        }
+        .todo-priority-badge.medium {
+          background: #fef3c7;
+          color: #d97706;
+        }
+        .todo-priority-badge.low {
+          background: #f1f5f9;
+          color: #475569;
+        }
+        .todo-date-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.2rem;
+          font-size: 0.68rem;
+          color: #64748b;
+          background: #f8fafc;
+          padding: 0.1rem 0.4rem;
+          border-radius: 4px;
+        }
+        .todo-date-badge.is-today {
+          color: #047857;
+          background: #ecfdf5;
+          font-weight: 600;
+        }
+        .todo-date-badge.is-overdue {
+          color: #dc2626;
+          background: #fee2e2;
+          font-weight: 700;
+        }
+        .todo-completed-time {
+          font-size: 0.68rem;
+          color: #10b981;
+          font-style: italic;
+        }
+        .todo-delete-btn {
+          background: transparent;
+          border: none;
+          color: #94a3b8;
+          cursor: pointer;
+          padding: 0.3rem;
+          border-radius: 4px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: all 0.15s ease;
+        }
+        .todo-delete-btn:hover {
+          color: #ef4444;
+          background: #fee2e2;
+        }
+
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.6; }
+        }
+
         @media (max-width: 1024px) {
           .tasks-layout-grid {
             grid-template-columns: 1fr;
           }
         }
-        @media (max-width: 640px) {
+        @media (max-width: 1100px) {
           .dashboard-header-banner {
-            flex-direction: column;
-            align-items: flex-start;
+            grid-template-columns: 1fr;
+            gap: 1rem;
           }
         }
       `}</style>

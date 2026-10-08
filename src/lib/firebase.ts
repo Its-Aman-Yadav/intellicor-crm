@@ -10,7 +10,7 @@ import {
   getDocs,
   writeBatch,
 } from 'firebase/firestore';
-import { Lead } from '@/types/crm';
+import { Lead, TodoItem } from '@/types/crm';
 
 export interface FirebaseConfig {
   apiKey: string;
@@ -207,6 +207,89 @@ export function subscribeToFirestoreLeads(
     return unsubscribe;
   } catch (err) {
     console.error('Failed to subscribe to Firestore:', err);
+    if (onError && err instanceof Error) onError(err);
+    return null;
+  }
+}
+
+export async function saveTodoToFirestore(todo: TodoItem): Promise<boolean> {
+  const db = getFirebaseDb();
+  if (!db) return false;
+
+  try {
+    const todoRef = doc(db, 'todos', todo.id);
+    const sanitized = sanitizeForFirestore(todo);
+    await setDoc(todoRef, sanitized, { merge: true });
+    return true;
+  } catch (err) {
+    console.error('Error saving todo to Firestore:', err);
+    return false;
+  }
+}
+
+export async function deleteTodoFromFirestore(todoId: string): Promise<boolean> {
+  const db = getFirebaseDb();
+  if (!db) return false;
+
+  try {
+    const todoRef = doc(db, 'todos', todoId);
+    await deleteDoc(todoRef);
+    return true;
+  } catch (err) {
+    console.error('Error deleting todo from Firestore:', err);
+    return false;
+  }
+}
+
+export async function syncAllTodosToFirestore(todos: TodoItem[]): Promise<number> {
+  const db = getFirebaseDb();
+  if (!db) return 0;
+
+  try {
+    const cleanTodos = todos.filter((t) => t && t.id);
+    const chunkSize = 400;
+    for (let i = 0; i < cleanTodos.length; i += chunkSize) {
+      const chunk = cleanTodos.slice(i, i + chunkSize);
+      const batch = writeBatch(db);
+      chunk.forEach((todo) => {
+        const ref = doc(db, 'todos', todo.id);
+        batch.set(ref, sanitizeForFirestore(todo), { merge: true });
+      });
+      await batch.commit();
+    }
+    return cleanTodos.length;
+  } catch (err) {
+    console.error('Error batch syncing todos to Firestore:', err);
+    return 0;
+  }
+}
+
+export function subscribeToFirestoreTodos(
+  onUpdate: (todos: TodoItem[]) => void,
+  onError?: (err: Error) => void
+): (() => void) | null {
+  const db = getFirebaseDb();
+  if (!db) return null;
+
+  try {
+    const todosCollection = collection(db, 'todos');
+    const unsubscribe = onSnapshot(
+      todosCollection,
+      (snapshot) => {
+        const remoteTodos: TodoItem[] = [];
+        snapshot.forEach((doc) => {
+          remoteTodos.push(doc.data() as TodoItem);
+        });
+        onUpdate(remoteTodos);
+      },
+      (error) => {
+        console.error('Firestore todos listener error:', error);
+        if (onError) onError(error);
+      }
+    );
+    return unsubscribe;
+  } catch (err) {
+    console.error('Failed to subscribe to Firestore todos:', err);
     if (onError && err instanceof Error) onError(err);
     return null;
   }

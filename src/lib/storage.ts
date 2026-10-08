@@ -1,4 +1,4 @@
-import { Lead, CallLog, WhatsAppTemplate, ScoringSignals, CallScriptConfig, UserDailyTarget } from '@/types/crm';
+import { Lead, CallLog, WhatsAppTemplate, ScoringSignals, CallScriptConfig, UserDailyTarget, TodoItem } from '@/types/crm';
 import { INITIAL_LEADS } from '@/data/seedData';
 import { DEFAULT_WHATSAPP_TEMPLATES } from './whatsapp';
 import { DEFAULT_CALL_SCRIPT_CONFIG } from '@/data/callScripts';
@@ -759,5 +759,28 @@ export function parseCSVToLeads(csvText: string): Lead[] {
   });
 
   return newLeads;
+}
+
+const TODOS_STORAGE_KEY = 'intellicor_crm_todos_v1';
+
+export function getStoredTodos(): TodoItem[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(TODOS_STORAGE_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw);
+  } catch (err) {
+    console.error('Failed to load todos from localStorage', err);
+    return [];
+  }
+}
+
+export function saveStoredTodos(todos: TodoItem[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(TODOS_STORAGE_KEY, JSON.stringify(todos));
+  } catch (err) {
+    console.error('Failed to save todos to localStorage', err);
+  }
 }
 

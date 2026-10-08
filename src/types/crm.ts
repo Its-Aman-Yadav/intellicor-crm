@@ -251,3 +251,20 @@ export interface CallScriptConfig {
   counterQuestions: string[];
   qualificationPrompts: QualificationPrompt[];
 }
+
+export type TodoPriority = 'HIGH' | 'MEDIUM' | 'LOW';
+
+export interface TodoItem {
+  id: string;
+  title: string;
+  completed: boolean;
+  dueDate?: string; // YYYY-MM-DD
+  dueTime?: string; // HH:mm
+  priority: TodoPriority;
+  category?: string;
+  repName?: string;
+  leadId?: string;
+  leadName?: string;
+  createdAt: string;
+  completedAt?: string;
+}
