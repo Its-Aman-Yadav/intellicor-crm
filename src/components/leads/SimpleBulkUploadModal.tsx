@@ -24,6 +24,8 @@ import {
   MapPin,
   Briefcase,
   Users,
+  Folder,
+  FolderPlus,
 } from 'lucide-react';
 
 interface SimpleBulkUploadModalProps {
@@ -31,6 +33,8 @@ interface SimpleBulkUploadModalProps {
   onClose: () => void;
   onImportLeads: (newLeads: Lead[], startCallingImmediately?: boolean) => void;
   activeRep: string;
+  initialCategory?: string;
+  existingCategories?: string[];
 }
 
 export default function SimpleBulkUploadModal({
@@ -38,10 +42,14 @@ export default function SimpleBulkUploadModal({
   onClose,
   onImportLeads,
   activeRep,
+  initialCategory = 'Airbnb',
+  existingCategories = ['Airbnb', 'Hotels', 'Manufacturing'],
 }: SimpleBulkUploadModalProps) {
   const [activeTab, setActiveTab] = useState<'upload' | 'paste'>('upload');
   const [pasteText, setPasteText] = useState('');
   const [fileName, setFileName] = useState('');
+  const [categoryName, setCategoryName] = useState(initialCategory || 'Airbnb');
+  const [sheetName, setSheetName] = useState('');
   const [parsedData, setParsedData] = useState<ParsedSheetResult | null>(null);
   const [customMappings, setCustomMappings] = useState<Record<number, DetectedField>>({});
   const [defaultCity, setDefaultCity] = useState('Mumbai');
@@ -55,6 +63,13 @@ export default function SimpleBulkUploadModal({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [, startTransition] = useTransition();
 
+  // Reset categoryName if initialCategory changes
+  React.useEffect(() => {
+    if (initialCategory) {
+      setCategoryName(initialCategory);
+    }
+  }, [initialCategory]);
+
   if (!isOpen) return null;
 
   const handleFileProcess = async (file: File) => {
@@ -62,9 +77,30 @@ export default function SimpleBulkUploadModal({
     setErrorMessage('');
     try {
       setFileName(file.name);
+      const cleanBase = file.name
+        .replace(/\.[^/.]+$/, '')
+        .replace(/[_-]/g, ' ')
+        .trim();
+      setSheetName(cleanBase || 'Uploaded Sheet');
+
+      // Auto-detect category from file name if possible
+      const lowerFile = file.name.toLowerCase();
+      if (lowerFile.includes('airbnb') || lowerFile.includes('homestay') || lowerFile.includes('villa')) {
+        setCategoryName('Airbnb');
+      } else if (lowerFile.includes('hotel') || lowerFile.includes('resort')) {
+        setCategoryName('Hotels');
+      } else if (lowerFile.includes('manufactur') || lowerFile.includes('industrial') || lowerFile.includes('factory')) {
+        setCategoryName('Manufacturing');
+      }
+
       const res = await readSpreadsheetFile(file);
       setParsedData(res);
-      setCustomMappings({});
+      // By default all fields should be Not Included
+      const initialSkipped: Record<number, DetectedField> = {};
+      res.headers.forEach((_, idx) => {
+        initialSkipped[idx] = 'skip';
+      });
+      setCustomMappings(initialSkipped);
     } catch (err: unknown) {
       console.error('File parsing error:', err);
       setErrorMessage(
@@ -111,8 +147,14 @@ export default function SimpleBulkUploadModal({
     try {
       const res = parsePastedSpreadsheetText(pasteText);
       setFileName('Pasted Rows');
+      setSheetName(`Pasted Batch - ${new Date().toLocaleDateString('en-GB')}`);
       setParsedData(res);
-      setCustomMappings({});
+      // By default all fields should be Not Included
+      const initialSkipped: Record<number, DetectedField> = {};
+      res.headers.forEach((_, idx) => {
+        initialSkipped[idx] = 'skip';
+      });
+      setCustomMappings(initialSkipped);
     } catch (err: unknown) {
       setErrorMessage(err instanceof Error ? err.message : 'Could not parse pasted data.');
     }
@@ -125,24 +167,55 @@ export default function SimpleBulkUploadModal({
     }));
   };
 
+  const handleSetAllNotIncluded = () => {
+    if (!parsedData) return;
+    const allSkip: Record<number, DetectedField> = {};
+    parsedData.headers.forEach((_, idx) => {
+      allSkip[idx] = 'skip';
+    });
+    setCustomMappings(allSkip);
+  };
+
+  const handleAutoSuggestMappings = () => {
+    if (!parsedData) return;
+    const suggested: Record<number, DetectedField> = {};
+    parsedData.headers.forEach((_, idx) => {
+      suggested[idx] = parsedData.detectedMappings[idx] || 'skip';
+    });
+    setCustomMappings(suggested);
+  };
+
   const getEffectiveMapping = (colIdx: number): DetectedField => {
     if (customMappings[colIdx] !== undefined) {
       return customMappings[colIdx];
     }
-    return parsedData?.detectedMappings[colIdx] || 'skip';
+    return 'skip';
   };
 
   const handleFinishImport = (startCallingImmediately = false) => {
     if (!parsedData) return;
 
+    const finalCat = categoryName.trim() || 'General Leads';
+    const finalSheet = sheetName.trim() || (fileName || 'Uploaded Sheet');
+
     startTransition(() => {
       const activeMappings = parsedData.headers.map((_, idx) => getEffectiveMapping(idx));
+      const includedMappings = activeMappings.filter((m) => m !== 'skip');
+
+      if (includedMappings.length === 0) {
+        setErrorMessage('All columns are currently "Not Included". Please choose which column contains Phone Numbers or Client Names before saving.');
+        return;
+      }
+
       const leads = convertMatrixToLeads(parsedData.rawMatrix, {
         mappings: activeMappings,
         hasHeader: parsedData.hasHeader,
         defaultCity,
-        defaultIndustry,
+        defaultIndustry: finalCat,
         assignedRep,
+        groupName: finalCat,
+        sheetName: finalSheet,
+        batchId: `batch-${Date.now()}`,
       });
 
       if (leads.length === 0) {
@@ -159,6 +232,7 @@ export default function SimpleBulkUploadModal({
   const handleReset = () => {
     setParsedData(null);
     setFileName('');
+    setSheetName('');
     setPasteText('');
     setErrorMessage('');
     setCustomMappings({});
@@ -329,9 +403,9 @@ export default function SimpleBulkUploadModal({
                     </h4>
                     <p className="summary-meta">
                       {phoneColumnFound ? (
-                        <span className="text-success-badge">✓ Phone number column detected</span>
+                        <span className="text-success-badge">✓ Phone number column selected</span>
                       ) : (
-                        <span className="text-warning-badge">⚠️ Please select which column has phone numbers</span>
+                        <span className="text-warning-badge">⚠️ All columns set to &ldquo;Not Included&rdquo; by default. Please select your columns below (e.g. Phone Number, Business Name).</span>
                       )}
                     </p>
                   </div>
@@ -345,10 +419,58 @@ export default function SimpleBulkUploadModal({
                 </button>
               </div>
 
+              {/* CATEGORY & SHEET NAMING SECTION */}
+              <div className="naming-category-card">
+                <div className="naming-card-header">
+                  <FolderPlus size={16} className="text-blue" />
+                  <span className="naming-card-title">Assign Category &amp; Sheet Name (Required)</span>
+                </div>
+                <div className="naming-fields-grid">
+                  <div className="setting-field">
+                    <label>
+                      <Folder size={14} /> Category / Group Name
+                    </label>
+                    <input
+                      type="text"
+                      value={categoryName}
+                      onChange={(e) => setCategoryName(e.target.value)}
+                      placeholder="e.g. Airbnb, Hotels, Manufacturing"
+                      className="form-input-sm form-input-bold"
+                      required
+                    />
+                    <div className="quick-category-pills">
+                      {Array.from(new Set(['Airbnb', 'Hotels', 'Manufacturing', ...existingCategories])).map((cat) => (
+                        <button
+                          key={cat}
+                          type="button"
+                          className={`cat-pill-btn ${categoryName.toLowerCase() === cat.toLowerCase() ? 'active' : ''}`}
+                          onClick={() => setCategoryName(cat)}
+                        >
+                          {cat}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="setting-field">
+                    <label>
+                      <FileSpreadsheet size={14} /> Sheet / Batch Name
+                    </label>
+                    <input
+                      type="text"
+                      value={sheetName}
+                      onChange={(e) => setSheetName(e.target.value)}
+                      placeholder="e.g. Goa Hosts - Oct Batch"
+                      className="form-input-sm form-input-bold"
+                      required
+                    />
+                    <span className="field-hint-text">Name this sheet to easily find it in your Category Hub</span>
+                  </div>
+                </div>
+              </div>
+
               {/* Quick Settings Row */}
               <div className="quick-settings-grid">
-
-
                 <div className="setting-field">
                   <label>
                     <MapPin size={14} /> Default City (if blank in sheet)
@@ -364,13 +486,13 @@ export default function SimpleBulkUploadModal({
 
                 <div className="setting-field">
                   <label>
-                    <Briefcase size={14} /> Default Category
+                    <Briefcase size={14} /> Industry / Business Type
                   </label>
                   <input
                     type="text"
                     value={defaultIndustry}
                     onChange={(e) => setDefaultIndustry(e.target.value)}
-                    placeholder="e.g. Local Business"
+                    placeholder="e.g. Travel & Hospitality"
                     className="form-input-sm"
                   />
                 </div>
@@ -379,8 +501,30 @@ export default function SimpleBulkUploadModal({
               {/* Column Mapping & Preview Table */}
               <div className="column-mapping-section">
                 <div className="mapping-header">
-                  <span className="mapping-title">Confirm Column Mappings</span>
-                  <span className="mapping-sub">Verify what each column in your sheet represents:</span>
+                  <div className="mapping-header-text">
+                    <span className="mapping-title">Confirm Column Fields</span>
+                    <span className="mapping-sub">
+                      All columns are <strong>Not Included</strong> by default. Select only the columns you want to import:
+                    </span>
+                  </div>
+                  <div className="mapping-header-actions">
+                    <button
+                      type="button"
+                      onClick={handleSetAllNotIncluded}
+                      className="btn-mapping-utility"
+                      title="Reset all columns to Not Included"
+                    >
+                      🚫 Reset All to Not Included
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleAutoSuggestMappings}
+                      className="btn-mapping-utility btn-mapping-auto"
+                      title="Auto-detect fields from column headers"
+                    >
+                      ✨ Auto-Detect
+                    </button>
+                  </div>
                 </div>
 
                 <div className="table-wrapper">
@@ -792,6 +936,67 @@ export default function SimpleBulkUploadModal({
         .btn-change-file:hover {
           background: #f8fafc;
         }
+        .naming-category-card {
+          background: #f0f7ff;
+          border: 1.5px solid #bfdbfe;
+          border-radius: 12px;
+          padding: 1.15rem;
+          display: flex;
+          flex-direction: column;
+          gap: 0.9rem;
+        }
+        .naming-card-header {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+        .naming-card-title {
+          font-size: 0.88rem;
+          font-weight: 700;
+          color: #1e40af;
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+        }
+        .naming-fields-grid {
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 1rem;
+        }
+        .form-input-bold {
+          font-weight: 600;
+          color: #0b1d33;
+        }
+        .quick-category-pills {
+          display: flex;
+          align-items: center;
+          gap: 0.35rem;
+          flex-wrap: wrap;
+          margin-top: 0.25rem;
+        }
+        .cat-pill-btn {
+          font-size: 0.72rem;
+          font-weight: 700;
+          padding: 0.2rem 0.55rem;
+          border-radius: 999px;
+          border: 1px solid #bfdbfe;
+          background: #ffffff;
+          color: #1e50bc;
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+        .cat-pill-btn:hover {
+          background: #dbeafe;
+        }
+        .cat-pill-btn.active {
+          background: #1e50bc;
+          color: #ffffff;
+          border-color: #1e50bc;
+        }
+        .field-hint-text {
+          font-size: 0.73rem;
+          color: #64748b;
+          margin-top: 0.2rem;
+        }
         .quick-settings-grid {
           display: grid;
           grid-template-columns: repeat(2, 1fr);
@@ -829,7 +1034,14 @@ export default function SimpleBulkUploadModal({
         .mapping-header {
           display: flex;
           justify-content: space-between;
-          align-items: baseline;
+          align-items: center;
+          gap: 0.75rem;
+          flex-wrap: wrap;
+        }
+        .mapping-header-text {
+          display: flex;
+          flex-direction: column;
+          gap: 0.15rem;
         }
         .mapping-title {
           font-size: 0.92rem;
@@ -839,6 +1051,38 @@ export default function SimpleBulkUploadModal({
         .mapping-sub {
           font-size: 0.78rem;
           color: #64748b;
+        }
+        .mapping-header-actions {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+        .btn-mapping-utility {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.35rem;
+          background: #f1f5f9;
+          border: 1px solid #cbd5e1;
+          color: #475569;
+          font-size: 0.75rem;
+          font-weight: 600;
+          padding: 0.32rem 0.65rem;
+          border-radius: 6px;
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+        .btn-mapping-utility:hover {
+          background: #e2e8f0;
+          color: #0f172a;
+        }
+        .btn-mapping-auto {
+          background: #eff6ff;
+          border-color: #bfdbfe;
+          color: #1d4ed8;
+        }
+        .btn-mapping-auto:hover {
+          background: #dbeafe;
+          color: #1e40af;
         }
         .table-wrapper {
           border: 1px solid #e2e8f0;
@@ -897,8 +1141,14 @@ export default function SimpleBulkUploadModal({
           font-weight: 600;
         }
         .select-skip {
+          background: #f8fafc;
+          color: #64748b;
+          border-color: #cbd5e1;
+          font-weight: 500;
+        }
+        .select-skip:hover {
+          border-color: #94a3b8;
           background: #f1f5f9;
-          color: #94a3b8;
         }
         .td-cell {
           padding: 0.5rem 0.75rem;

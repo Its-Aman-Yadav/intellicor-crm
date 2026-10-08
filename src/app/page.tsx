@@ -15,6 +15,8 @@ import FirebaseSettingsModal from '@/components/common/FirebaseSettingsModal';
 import SimplePowerDialer from '@/components/leads/SimplePowerDialer';
 import SimpleLeadList from '@/components/leads/SimpleLeadList';
 import SimpleBulkUploadModal from '@/components/leads/SimpleBulkUploadModal';
+import CategoryGroupHub from '@/components/groups/CategoryGroupHub';
+import DailyTargetModal from '@/components/common/DailyTargetModal';
 import {
   isFirestoreConfigured,
   saveLeadToFirestore,
@@ -31,6 +33,7 @@ import {
   CallOpenerScript,
   CallResult,
   CommonObjection,
+  UserDailyTarget,
 } from '@/types/crm';
 import {
   getStoredLeads,
@@ -43,6 +46,11 @@ import {
   exportLeadsToCSV,
   parseCSVToLeads,
   isMockLead,
+  clearAllStoredLeads,
+  getStoredDailyTarget,
+  saveStoredDailyTarget,
+  DEFAULT_DAILY_TARGET,
+  generateSampleCategoryLeads,
 } from '@/lib/storage';
 import {
   LayoutList,
@@ -66,17 +74,25 @@ import {
   Target,
   Download,
   Calendar,
+  FolderOpen,
+  TrendingUp,
+  ArrowLeft,
 } from 'lucide-react';
 
 export default function CRMApp() {
   const [isClient, setIsClient] = useState(false);
   const [leads, setLeads] = useState<Lead[]>([]);
 
-  // Mode: 'simple' (Streamlined 1-by-1 caller) or 'advanced' (Full CRM with analytics & kanban)
+  // Mode: simple (Streamlined 1-by-1 caller, dashboard & categorized groups)
   const [appMode, setAppMode] = useState<'simple' | 'advanced'>('simple');
-  const [simpleTab, setSimpleTab] = useState<'call_queue' | 'leads'>('call_queue');
+  const [simpleTab, setSimpleTab] = useState<'dashboard' | 'groups' | 'call_queue' | 'leads'>('dashboard');
   const [activeCallingLeadId, setActiveCallingLeadId] = useState<string | undefined>();
+  const [selectedCallingCategory, setSelectedCallingCategory] = useState<string | undefined>();
+  const [selectedCallingSheet, setSelectedCallingSheet] = useState<string | undefined>();
+  const [uploadCategory, setUploadCategory] = useState<string | undefined>();
   const [isSimpleUploadOpen, setIsSimpleUploadOpen] = useState(false);
+  const [dailyTarget, setDailyTarget] = useState<UserDailyTarget>(DEFAULT_DAILY_TARGET);
+  const [isTargetModalOpen, setIsTargetModalOpen] = useState(false);
 
   // Advanced mode state
   const [activeTab, setActiveTab] = useState<'dashboard' | 'pipeline' | 'analytics'>('dashboard');
@@ -108,25 +124,33 @@ export default function CRMApp() {
   // Initialize client-side state & Firestore sync
   useEffect(() => {
     setIsClient(true);
-    // Purge legacy mock storage keys
+    // Purge legacy storage keys
     localStorage.removeItem('intellicor_crm_leads_v1');
     localStorage.removeItem('intellicor_crm_leads_v2');
+    localStorage.removeItem('intellicor_crm_leads_v3');
+
+    // Wipe all previous leads completely as requested
+    const PURGE_SLATE_KEY = 'intellicor_crm_fresh_clean_slate_v4';
+    if (!localStorage.getItem(PURGE_SLATE_KEY)) {
+      clearAllStoredLeads();
+      if (isFirestoreConfigured()) {
+        clearAllLeadsFromFirestore().catch(console.error);
+      }
+      localStorage.setItem(PURGE_SLATE_KEY, 'true');
+    }
 
     const loadedLeads = getStoredLeads();
     const cleanLeads = loadedLeads.filter((l) => !isMockLead(l));
     setLeads(cleanLeads);
     saveStoredLeads(cleanLeads);
 
+    const loadedTarget = getStoredDailyTarget();
+    setDailyTarget(loadedTarget);
+
     const loadedTemplates = getStoredTemplates();
     setTemplates(loadedTemplates);
     const rep = getStoredActiveRep();
     setActiveRep(rep || 'All Reps');
-
-    // Load saved app mode preference if any
-    const savedMode = localStorage.getItem('intellicor_crm_mode');
-    if (savedMode === 'advanced') {
-      setAppMode('advanced');
-    }
 
     // Check Cloud Firestore connection
     const firestoreActive = isFirestoreConfigured();
@@ -249,6 +273,7 @@ export default function CRMApp() {
       objections?: string[];
       askedForWhatsApp: boolean;
       notes: string;
+      durationSeconds?: number;
       nextFollowUpDate?: string;
       nextFollowUpTime?: string;
       brochureSent?: boolean;
@@ -274,6 +299,7 @@ export default function CRMApp() {
       objections: log.objections,
       askedForWhatsApp: log.askedForWhatsApp,
       notes: log.notes,
+      durationSeconds: log.durationSeconds,
       nextFollowUpDate: log.nextFollowUpDate,
       nextFollowUpTime: log.nextFollowUpTime,
       brochureSent: log.brochureSent,
@@ -410,11 +436,90 @@ export default function CRMApp() {
     // Always store to Firestore
     syncAllLeadsToFirestore(newLeads).catch(console.error);
     if (startCallingImmediately && newLeads.length > 0) {
+      if (newLeads[0].groupName) setSelectedCallingCategory(newLeads[0].groupName);
+      if (newLeads[0].sheetName) setSelectedCallingSheet(newLeads[0].sheetName);
       setActiveCallingLeadId(newLeads[0].id);
       setSimpleTab('call_queue');
       setAppMode('simple');
     }
   };
+
+  const handleStartCallingSheet = (categoryName: string, sheetName?: string) => {
+    setSelectedCallingCategory(categoryName);
+    setSelectedCallingSheet(sheetName || undefined);
+    const matchingLeads = leads.filter(
+      (l) =>
+        (l.groupName || 'Uncategorized').toLowerCase() === categoryName.toLowerCase() &&
+        (!sheetName || (l.sheetName || 'Default Batch').toLowerCase() === sheetName.toLowerCase())
+    );
+    if (matchingLeads.length > 0) {
+      const pendingLead = matchingLeads.find(
+        (l) =>
+          l.status === 'New' ||
+          l.callResult === 'Not Picked Up' ||
+          l.callResult === 'No Answer' ||
+          l.callResult === 'Call Back Later' ||
+          l.callResult === 'Callback'
+      );
+      setActiveCallingLeadId((pendingLead || matchingLeads[0]).id);
+    } else {
+      setActiveCallingLeadId(undefined);
+    }
+    setSimpleTab('call_queue');
+  };
+
+  const handleViewSheetLeads = (categoryName: string, sheetName?: string) => {
+    setSelectedCallingCategory(categoryName);
+    setSelectedCallingSheet(sheetName || undefined);
+    setSimpleTab('leads');
+  };
+
+  const handleClearCategoryFilter = () => {
+    setSelectedCallingCategory(undefined);
+    setSelectedCallingSheet(undefined);
+  };
+
+  const handleDeleteSheet = (categoryName: string, sheetName: string) => {
+    if (
+      confirm(
+        `Are you sure you want to delete all leads in "${categoryName} - ${sheetName}"?`
+      )
+    ) {
+      const updated = leads.filter(
+        (l) =>
+          !(
+            (l.groupName || 'Uncategorized').toLowerCase() === categoryName.toLowerCase() &&
+            (l.sheetName || 'Default Batch').toLowerCase() === sheetName.toLowerCase()
+          )
+      );
+      updateAndSaveLeads(updated);
+    }
+  };
+
+  const handleLoadSampleCategories = () => {
+    const sample = generateSampleCategoryLeads();
+    const merged = [...sample, ...leads];
+    updateAndSaveLeads(merged);
+    syncAllLeadsToFirestore(sample).catch(console.error);
+  };
+
+  const handleOpenUploadModal = (category?: string) => {
+    setUploadCategory(category);
+    setIsSimpleUploadOpen(true);
+  };
+
+  const handleSaveTarget = (newTarget: UserDailyTarget) => {
+    setDailyTarget(newTarget);
+    saveStoredDailyTarget(newTarget);
+  };
+
+  const existingCategories = useMemo(() => {
+    const cats = new Set<string>(['Airbnb', 'Hotels', 'Manufacturing', 'Real Estate', 'Clinics']);
+    leads.forEach((l) => {
+      if (l.groupName) cats.add(l.groupName);
+    });
+    return Array.from(cats);
+  }, [leads]);
 
   // Quick stats computed for top bar
   const stats = useMemo(() => {
@@ -452,11 +557,15 @@ export default function CRMApp() {
     );
 
     let todayCallsCount = 0;
+    let todayDurationSeconds = 0;
     repLeads.forEach((l) => {
       if (l.callLogs && l.callLogs.length > 0) {
         l.callLogs.forEach((log) => {
           if (log.date && log.date.slice(0, 10) === todayStr) {
             todayCallsCount++;
+            if (log.durationSeconds) {
+              todayDurationSeconds += log.durationSeconds;
+            }
           }
         });
       }
@@ -471,6 +580,7 @@ export default function CRMApp() {
       wonDeals: wonLeads.length,
       wonRevenue,
       todayCallsCount,
+      todayDurationSeconds,
     };
   }, [leads, activeRep, tomorrowStr]);
 
@@ -520,12 +630,18 @@ export default function CRMApp() {
           <div className="simple-header-inner">
             {/* Left: Brand & Main Navigation Tabs */}
             <div className="header-brand-and-tabs">
-              <div className="simple-brand-block">
+              <div
+                className="simple-brand-block"
+                onClick={() => setSimpleTab('dashboard')}
+                title="Go to Command Dashboard"
+                role="button"
+                tabIndex={0}
+              >
                 <Image
                   src="/logo.png"
                   alt="Intellicor Logo"
-                  width={30}
-                  height={30}
+                  width={28}
+                  height={28}
                   priority
                   className="brand-logo"
                 />
@@ -535,15 +651,42 @@ export default function CRMApp() {
                 </div>
               </div>
 
-              {/* Main Tabs */}
+              <div className="header-divider" />
+
+              {/* Dedicated 'Back to Dashboard' button when inside a workspace */}
+              {simpleTab !== 'dashboard' && (
+                <button
+                  type="button"
+                  onClick={() => setSimpleTab('dashboard')}
+                  className="btn-return-dashboard"
+                  title="Return to Full Dashboard"
+                >
+                  <ArrowLeft size={15} />
+                  <span>Dashboard</span>
+                </button>
+              )}
+
+              {/* Navigation Tabs */}
               <nav className="simple-nav-tabs">
+                <button
+                  type="button"
+                  onClick={() => setSimpleTab('groups')}
+                  className={`simple-nav-tab ${simpleTab === 'groups' ? 'active' : ''}`}
+                  title="Open Categorized Groups & Sheets Hub"
+                >
+                  <FolderOpen size={15} />
+                  <span>Groups & Sheets</span>
+                  <span className="nav-badge-count">{existingCategories.length}</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={() => setSimpleTab('call_queue')}
                   className={`simple-nav-tab ${simpleTab === 'call_queue' ? 'active' : ''}`}
+                  title="Launch 1-by-1 Telecalling Queue"
                 >
-                  <PhoneCall size={16} />
-                  <span>Call One-by-One</span>
+                  <PhoneCall size={15} />
+                  <span>Call 1-by-1</span>
                   <span className="nav-badge-count">{stats.inQueue}</span>
                 </button>
 
@@ -551,8 +694,9 @@ export default function CRMApp() {
                   type="button"
                   onClick={() => setSimpleTab('leads')}
                   className={`simple-nav-tab ${simpleTab === 'leads' ? 'active' : ''}`}
+                  title="View All Telecalling Leads"
                 >
-                  <Layers size={16} />
+                  <Layers size={15} />
                   <span>All Leads</span>
                   <span className="nav-badge-count">{leads.length}</span>
                 </button>
@@ -572,17 +716,19 @@ export default function CRMApp() {
                   <Flame size={13} className={stats.dueToday > 0 ? 'text-red' : 'text-amber'} />
                   <span>Today: <strong>{stats.dueToday}</strong></span>
                 </div>
-                <div className="header-stat-pill" title="Due for follow-up tomorrow">
-                  <Clock size={13} className="text-amber" />
-                  <span>Tomorrow: <strong>{stats.dueTomorrow}</strong></span>
-                </div>
                 <div className="header-stat-pill" title="Brochures sent via WhatsApp">
                   <Send size={13} className="text-green" />
                   <span>Brochures: <strong>{stats.brochuresSent}</strong></span>
                 </div>
-                <div className="header-stat-pill target-pill" title="Calls made today towards daily solo target (50)">
+                <div
+                  className="header-stat-pill target-pill interactive-target-pill"
+                  title={`Daily Goal: ${dailyTarget.contactsTarget || 50} calls / ${(dailyTarget.durationMinutesTarget || 120) / 60}h. Click to customize goals.`}
+                  onClick={() => setIsTargetModalOpen(true)}
+                  style={{ cursor: 'pointer' }}
+                >
                   <Target size={13} className="text-blue" />
-                  <span>Calls: <strong>{stats.todayCallsCount}</strong>/50</span>
+                  <span>Target: <strong>{stats.todayCallsCount}</strong>/{dailyTarget.contactsTarget || 50}</span>
+                  <span className="pill-edit-hint">✎</span>
                 </div>
                 {stats.wonDeals > 0 && (
                   <div className="header-stat-pill won-pill" title="Closed Won Revenue">
@@ -590,34 +736,16 @@ export default function CRMApp() {
                     <span>Won: <strong>₹{stats.wonRevenue.toLocaleString('en-IN')}</strong> ({stats.wonDeals})</span>
                   </div>
                 )}
-                <div
-                  className="header-stat-pill sync-pill"
-                  title={isFirestoreConnected ? "Connected to Cloud Firestore — changes sync automatically" : "Connecting to Cloud Firestore..."}
-                >
-                  <span className={`sync-dot ${isFirestoreConnected ? 'live' : 'pending'}`} />
-                  <span>{isFirestoreConnected ? 'Cloud Synced' : 'Syncing...'}</span>
-                </div>
               </div>
 
               {/* Upload Excel Button */}
               <button
                 type="button"
-                onClick={() => setIsSimpleUploadOpen(true)}
+                onClick={() => handleOpenUploadModal()}
                 className="btn-upload-excel-header"
               >
                 <FileSpreadsheet size={16} />
                 <span>Upload Excel</span>
-              </button>
-
-              {/* Switch to Advanced CRM Mode */}
-              <button
-                type="button"
-                onClick={() => handleToggleAppMode('advanced')}
-                className="btn-switch-mode"
-                title="Switch to Full CRM with Kanban & Analytics"
-              >
-                <SlidersHorizontal size={14} />
-                <span>Advanced View</span>
               </button>
             </div>
           </div>
@@ -625,25 +753,67 @@ export default function CRMApp() {
 
         {/* MAIN BODY CONTENT */}
         <main className="simple-main-container">
-          {simpleTab === 'call_queue' ? (
+          {simpleTab === 'dashboard' && (
+            <DailyDashboard
+              leads={leads}
+              activeRep={activeRep}
+              onOpenLead={handleOpenLead}
+              onQuickCall={handleQuickCall}
+              onOpenNewLead={handleOpenNewLead}
+              templates={templates}
+              selectedDate={selectedDate}
+              setSelectedDate={setSelectedDate}
+              onStartCallingSheet={handleStartCallingSheet}
+              onViewSheetLeads={handleViewSheetLeads}
+              dailyTarget={dailyTarget}
+              onOpenTargetModal={() => setIsTargetModalOpen(true)}
+            />
+          )}
+
+          {simpleTab === 'groups' && (
+            <CategoryGroupHub
+              leads={leads}
+              dailyTarget={dailyTarget}
+              todayCallsCount={stats.todayCallsCount}
+              todayDurationSeconds={stats.todayDurationSeconds}
+              onOpenUploadModal={handleOpenUploadModal}
+              onStartCallingSheet={handleStartCallingSheet}
+              onViewSheetLeads={handleViewSheetLeads}
+              onDeleteSheet={handleDeleteSheet}
+              onLoadSampleCategories={handleLoadSampleCategories}
+              onOpenTargetModal={() => setIsTargetModalOpen(true)}
+              activeRep={activeRep}
+            />
+          )}
+
+          {simpleTab === 'call_queue' && (
             <SimplePowerDialer
               leads={leads}
               activeRep={activeRep}
+              dailyTarget={dailyTarget}
+              selectedCategory={selectedCallingCategory}
+              selectedSheet={selectedCallingSheet}
               onSaveCallLog={handleSaveCallLog}
               onOpenLeadModal={handleOpenLead}
-              onOpenUploadModal={() => setIsSimpleUploadOpen(true)}
+              onOpenUploadModal={() => handleOpenUploadModal(selectedCallingCategory)}
+              onOpenTargetModal={() => setIsTargetModalOpen(true)}
               initialLeadId={activeCallingLeadId}
-              onExit={() => setSimpleTab('leads')}
+              onExit={() => setSimpleTab('dashboard')}
             />
-          ) : (
+          )}
+
+          {simpleTab === 'leads' && (
             <SimpleLeadList
               leads={leads}
               activeRep={activeRep}
+              selectedCategory={selectedCallingCategory}
+              selectedSheet={selectedCallingSheet}
+              onClearCategoryFilter={handleClearCategoryFilter}
               onStartCallingQueue={(leadId) => {
                 setActiveCallingLeadId(leadId);
                 setSimpleTab('call_queue');
               }}
-              onOpenUploadModal={() => setIsSimpleUploadOpen(true)}
+              onOpenUploadModal={() => handleOpenUploadModal()}
               onDeleteLead={handleDeleteLead}
               onClearAllLeads={handleClearAllLeads}
               onOpenNewLead={handleOpenNewLead}
@@ -659,6 +829,16 @@ export default function CRMApp() {
           onClose={() => setIsSimpleUploadOpen(false)}
           onImportLeads={handleBulkImportLeads}
           activeRep={activeRep}
+          initialCategory={uploadCategory || 'Airbnb'}
+          existingCategories={existingCategories}
+        />
+
+        {/* DAILY TARGET MODAL */}
+        <DailyTargetModal
+          isOpen={isTargetModalOpen}
+          onClose={() => setIsTargetModalOpen(false)}
+          currentTarget={dailyTarget}
+          onSaveTarget={handleSaveTarget}
         />
 
         {/* Lead View/Edit Modal if opened */}
@@ -690,11 +870,13 @@ export default function CRMApp() {
             top: 0;
             z-index: 1000;
             box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+            width: 100%;
           }
           .simple-header-inner {
-            max-width: 1400px;
+            max-width: 1440px;
             margin: 0 auto;
-            padding: 0.75rem 1.5rem;
+            padding: 0 1.25rem;
+            height: 60px;
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -703,58 +885,113 @@ export default function CRMApp() {
           .header-brand-and-tabs {
             display: flex;
             align-items: center;
-            gap: 1.75rem;
+            gap: 0.85rem;
+            flex-shrink: 0;
           }
           .simple-brand-block {
-            display: flex;
+            display: inline-flex;
             align-items: center;
             gap: 0.65rem;
+            height: 36px;
+            cursor: pointer;
+            user-select: none;
+            flex-shrink: 0;
+          }
+          .brand-logo {
+            width: 28px;
+            height: 28px;
+            object-fit: contain;
+            flex-shrink: 0;
           }
           .brand-text {
-            display: flex;
+            display: inline-flex;
             align-items: center;
-            gap: 0.4rem;
+            gap: 0.45rem;
+            white-space: nowrap;
           }
           .brand-title {
             font-size: 1.15rem;
             font-weight: 800;
             color: #0b1d33;
             letter-spacing: -0.02em;
+            line-height: 1;
           }
           .brand-badge-telecaller {
-            font-size: 0.7rem;
+            font-size: 0.68rem;
             font-weight: 700;
             text-transform: uppercase;
             background: #eff6ff;
             color: #1e50bc;
-            padding: 0.15rem 0.45rem;
+            padding: 0.2rem 0.45rem;
             border-radius: 4px;
             letter-spacing: 0.04em;
+            line-height: 1;
+            border: 1px solid #dbeafe;
+          }
+          .header-divider {
+            width: 1px;
+            height: 24px;
+            background: #e2e8f0;
+            flex-shrink: 0;
+          }
+          .btn-return-dashboard {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+            height: 36px;
+            padding: 0 0.85rem;
+            background: #eff6ff;
+            border: 1px solid #bfdbfe;
+            color: #1e50bc;
+            border-radius: 8px;
+            font-size: 0.82rem;
+            font-weight: 700;
+            cursor: pointer;
+            white-space: nowrap;
+            flex-shrink: 0;
+            line-height: 1;
+            transition: all 0.15s ease;
+            box-sizing: border-box;
+          }
+          .btn-return-dashboard:hover {
+            background: #dbeafe;
+            border-color: #93c5fd;
+            transform: translateX(-1px);
           }
           .simple-nav-tabs {
-            display: flex;
+            display: inline-flex;
             align-items: center;
-            gap: 0.35rem;
+            gap: 0.25rem;
             background: #f1f5f9;
             padding: 3px;
-            border-radius: 10px;
+            border-radius: 9px;
+            border: 1px solid #e2e8f0;
+            flex-shrink: 0;
+            height: 38px;
+            box-sizing: border-box;
           }
           .simple-nav-tab {
-            display: flex;
+            display: inline-flex;
             align-items: center;
-            gap: 0.5rem;
-            padding: 0.45rem 0.95rem;
-            border-radius: 8px;
+            gap: 0.45rem;
+            height: 30px;
+            padding: 0 0.85rem;
+            border-radius: 6px;
             border: none;
             background: transparent;
-            font-size: 0.85rem;
-            font-weight: 500;
+            font-size: 0.82rem;
+            font-weight: 600;
             color: #475569;
             cursor: pointer;
-            transition: all 0.15s;
+            white-space: nowrap;
+            flex-shrink: 0;
+            line-height: 1;
+            transition: all 0.15s ease;
+            box-sizing: border-box;
           }
           .simple-nav-tab:hover {
             color: #0b1d33;
+            background: rgba(255, 255, 255, 0.5);
           }
           .simple-nav-tab.active {
             background: #ffffff;
@@ -763,37 +1000,62 @@ export default function CRMApp() {
             box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
           }
           .nav-badge-count {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
             background: #e2e8f0;
             color: #475569;
             font-size: 0.72rem;
-            padding: 0.1rem 0.4rem;
+            min-width: 18px;
+            height: 18px;
+            padding: 0 0.35rem;
             border-radius: 9999px;
             font-weight: 700;
+            line-height: 1;
           }
           .simple-nav-tab.active .nav-badge-count {
             background: #eff6ff;
             color: #1e50bc;
           }
           .header-right-actions {
-            display: flex;
+            display: inline-flex;
             align-items: center;
-            gap: 0.75rem;
+            gap: 0.65rem;
+            flex-shrink: 0;
           }
           .header-stats-pills {
-            display: flex;
+            display: inline-flex;
             align-items: center;
-            gap: 0.5rem;
+            gap: 0.45rem;
+            flex-shrink: 0;
           }
           .header-stat-pill {
-            display: flex;
+            display: inline-flex;
             align-items: center;
-            gap: 0.35rem;
+            gap: 0.4rem;
+            height: 36px;
+            padding: 0 0.75rem;
             font-size: 0.8rem;
-            background: #f8fafc;
-            border: 1px solid #e2e8f0;
-            padding: 0.35rem 0.65rem;
+            background: #ffffff;
+            border: 1px solid #cbd5e1;
             border-radius: 8px;
             color: #475569;
+            white-space: nowrap;
+            flex-shrink: 0;
+            line-height: 1;
+            box-sizing: border-box;
+            transition: all 0.15s ease;
+          }
+          .header-stat-pill span {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.2rem;
+            white-space: nowrap;
+            line-height: 1;
+          }
+          .header-stat-pill strong {
+            font-weight: 700;
+            color: #0f172a;
           }
           .text-amber {
             color: #d97706;
@@ -827,154 +1089,94 @@ export default function CRMApp() {
             border-color: #bfdbfe;
             color: #1e50bc;
           }
-          .header-stat-pill.sync-pill {
-            background: #f0fdf4;
-            border-color: #bbf7d0;
-            color: #15803d;
-            font-size: 0.76rem;
-            font-weight: 600;
+          .header-stat-pill.target-pill strong {
+            color: #1e50bc;
           }
-          .sync-dot {
-            width: 7px;
-            height: 7px;
-            border-radius: 50%;
-            display: inline-block;
+          .header-stat-pill.target-pill.interactive-target-pill {
+            cursor: pointer;
           }
-          .sync-dot.live {
-            background: #22c55e;
-            box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.25);
+          .header-stat-pill.target-pill.interactive-target-pill:hover {
+            background: #dbeafe;
+            border-color: #93c5fd;
+            transform: translateY(-1px);
           }
-          .sync-dot.pending {
-            background: #eab308;
-            box-shadow: 0 0 0 2px rgba(234, 179, 8, 0.25);
+          .pill-edit-hint {
+            font-size: 0.72rem;
+            opacity: 0.6;
+            margin-left: 2px;
           }
           @keyframes pulseSubtle {
             0%, 100% { transform: scale(1); }
             50% { transform: scale(1.02); }
           }
-
           .btn-upload-excel-header {
-            display: flex;
+            display: inline-flex;
             align-items: center;
+            justify-content: center;
             gap: 0.45rem;
+            height: 36px;
+            padding: 0 0.95rem;
             background: #1e50bc;
             color: #ffffff;
             border: none;
-            padding: 0.5rem 1rem;
             border-radius: 8px;
-            font-size: 0.85rem;
+            font-size: 0.84rem;
             font-weight: 600;
             cursor: pointer;
-            box-shadow: 0 2px 6px rgba(30, 80, 188, 0.25);
-            transition: all 0.15s;
+            white-space: nowrap;
+            flex-shrink: 0;
+            box-shadow: 0 1px 3px rgba(30, 80, 188, 0.25);
+            transition: all 0.15s ease;
+            line-height: 1;
+            box-sizing: border-box;
           }
           .btn-upload-excel-header:hover {
             background: #1742a0;
             transform: translateY(-1px);
-          }
-          .btn-switch-mode {
-            display: flex;
-            align-items: center;
-            gap: 0.35rem;
-            background: transparent;
-            border: 1px solid #cbd5e1;
-            color: #64748b;
-            padding: 0.45rem 0.75rem;
-            border-radius: 8px;
-            font-size: 0.78rem;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.15s;
-          }
-          .btn-switch-mode:hover {
-            background: #f1f5f9;
-            color: #0b1d33;
+            box-shadow: 0 3px 8px rgba(30, 80, 188, 0.35);
           }
           .simple-main-container {
-            max-width: 1400px;
+            max-width: 1440px;
             width: 100%;
             margin: 0 auto;
-            padding: 1.5rem 1.5rem 3rem;
+            padding: 1.5rem 1.25rem 3rem;
             flex: 1;
           }
 
-          @media (max-width: 1024px) {
+          /* Responsive adjustments */
+          @media (max-width: 1240px) {
             .simple-header-inner {
-              padding: 0.75rem 1rem;
-              gap: 0.75rem;
+              overflow-x: auto;
+              scrollbar-width: none;
             }
-            .header-brand-and-tabs {
-              gap: 1rem;
-            }
-            .simple-main-container {
-              padding: 1.25rem 1rem 3rem;
+            .simple-header-inner::-webkit-scrollbar {
+              display: none;
             }
           }
 
-          @media (max-width: 900px) {
+          @media (max-width: 768px) {
+            .simple-header {
+              height: auto;
+            }
             .simple-header-inner {
-              flex-direction: column;
-              align-items: stretch;
+              height: auto;
+              padding: 0.6rem 0.85rem;
+              flex-wrap: wrap;
               gap: 0.65rem;
             }
             .header-brand-and-tabs {
-              justify-content: space-between;
-              flex-wrap: wrap;
-            }
-            .header-right-actions {
-              justify-content: space-between;
-              flex-wrap: wrap;
-              gap: 0.5rem;
-            }
-          }
-
-          @media (max-width: 640px) {
-            .simple-header-inner {
-              padding: 0.5rem 0.75rem;
-              gap: 0.5rem;
-            }
-            .header-brand-and-tabs {
-              flex-direction: column;
-              align-items: stretch;
-              gap: 0.5rem;
-            }
-            .simple-brand-block {
-              justify-content: space-between;
-            }
-            .simple-nav-tabs {
               width: 100%;
-            }
-            .simple-nav-tab {
-              flex: 1;
-              justify-content: center;
-              padding: 0.5rem 0.4rem;
-              font-size: 0.8rem;
-              gap: 0.35rem;
+              justify-content: space-between;
+              flex-wrap: wrap;
             }
             .header-right-actions {
-              display: flex;
-              align-items: center;
+              width: 100%;
               justify-content: space-between;
-              gap: 0.4rem;
+              overflow-x: auto;
+              scrollbar-width: none;
             }
-            .header-stats-pills {
-              gap: 0.35rem;
-            }
-            .header-stat-pill {
-              padding: 0.3rem 0.5rem;
-              font-size: 0.74rem;
-            }
-            .btn-upload-excel-header {
-              padding: 0.45rem 0.75rem;
-              font-size: 0.78rem;
-              gap: 0.35rem;
-            }
-            .btn-switch-mode {
-              padding: 0.45rem 0.6rem;
-              font-size: 0.72rem;
-            }
-            .simple-main-container {
-              padding: 0.75rem 0.6rem 3rem;
+            .header-right-actions::-webkit-scrollbar {
+              display: none;
             }
           }
         `}</style>
@@ -1088,6 +1290,12 @@ export default function CRMApp() {
               templates={templates}
               selectedDate={selectedDate}
               setSelectedDate={setSelectedDate}
+              onStartCallingSheet={(category, sheet) => {
+                handleStartCallingSheet(category, sheet);
+                setAppMode('simple');
+              }}
+              dailyTarget={dailyTarget}
+              onOpenTargetModal={() => setIsTargetModalOpen(true)}
             />
           )}
 
@@ -1163,6 +1371,16 @@ export default function CRMApp() {
         onClose={() => setIsSimpleUploadOpen(false)}
         onImportLeads={handleBulkImportLeads}
         activeRep={activeRep}
+        initialCategory={uploadCategory || 'Airbnb'}
+        existingCategories={existingCategories}
+      />
+
+      {/* MODAL 4.5: Daily Target Modal */}
+      <DailyTargetModal
+        isOpen={isTargetModalOpen}
+        onClose={() => setIsTargetModalOpen(false)}
+        currentTarget={dailyTarget}
+        onSaveTarget={handleSaveTarget}
       />
 
       {/* MODAL 5: Firebase / Firestore Settings Modal */}

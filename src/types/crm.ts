@@ -89,6 +89,7 @@ export interface CallLog {
   leadId: string;
   date: string; // ISO date-time string
   repName: string;
+  durationSeconds?: number; // duration of the call in seconds
   openerScript?: CallOpenerScript | string;
   result: CallResult | string;
   objection?: CommonObjection | string;
@@ -120,6 +121,11 @@ export interface Lead {
   website: string;
   googleProfile: string;
   instagram: string;
+
+  // Group / Category & Sheet Info
+  groupName?: string; // e.g. "Airbnb", "Hotels", "Manufacturing"
+  sheetName?: string; // e.g. "Airbnb Goa Hosts - Batch 1.xlsx"
+  batchId?: string;   // unique batch identifier
 
   // Scoring
   signals: ScoringSignals;
@@ -153,6 +159,40 @@ export interface Lead {
   assignedRep: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface UserDailyTarget {
+  contactsTarget: number; // e.g. 50 calls
+  durationMinutesTarget: number; // e.g. 120 minutes (2 hours)
+  mode: 'contacts' | 'duration' | 'both';
+}
+
+export interface CategorySheetItem {
+  sheetName: string;
+  groupName: string;
+  batchId?: string;
+  totalLeads: number;
+  contactedLeads: number;
+  pendingLeads: number;
+  interestedLeads: number;
+  wonLeads: number;
+  wonValue: number;
+  avgCallDurationSec: number;
+  estimatedDaysToFinish: number;
+  createdAt?: string;
+}
+
+export interface CategoryGroup {
+  name: string;
+  sheets: CategorySheetItem[];
+  totalLeads: number;
+  contactedLeads: number;
+  pendingLeads: number;
+  interestedLeads: number;
+  wonLeads: number;
+  wonValue: number;
+  avgCallDurationSec: number;
+  estimatedDaysToFinish: number;
 }
 
 export interface PackagePricing {

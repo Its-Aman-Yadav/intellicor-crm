@@ -1,14 +1,14 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { Lead, CallResult, CallLog } from '@/types/crm';
+import { Lead, CallResult, CallLog, UserDailyTarget } from '@/types/crm';
 import { cleanPhoneNumber, createWhatsAppLink } from '@/lib/whatsapp';
 import {
   getStoredBrochureConfig,
-  saveStoredBrochureConfig,
   formatBrochureMessage,
   BrochureConfig,
 } from '@/lib/brochureSettings';
+import { getScriptForCategory, CallScriptConfig } from '@/data/callScripts';
 import {
   Phone,
   PhoneCall,
@@ -18,7 +18,6 @@ import {
   Clock,
   Calendar,
   CheckCircle2,
-  XCircle,
   ThumbsUp,
   ThumbsDown,
   ArrowRight,
@@ -26,14 +25,12 @@ import {
   SkipForward,
   Copy,
   Check,
-  ExternalLink,
   MapPin,
   Building2,
   User,
   FileText,
   Send,
   Sparkles,
-  Settings,
   Layers,
   History,
   X,
@@ -41,14 +38,21 @@ import {
   Pause,
   RotateCcw,
   Trophy,
-  Flame,
   Target,
+  FolderOpen,
+  HelpCircle,
+  ShieldAlert,
+  ChevronRight,
+  Edit3,
 } from 'lucide-react';
 import QuickWhatsAppModal from '@/components/common/QuickWhatsAppModal';
 
 interface SimplePowerDialerProps {
   leads: Lead[];
   activeRep: string;
+  dailyTarget?: UserDailyTarget;
+  selectedCategory?: string;
+  selectedSheet?: string;
   onSaveCallLog: (
     leadId: string,
     log: {
@@ -56,6 +60,7 @@ interface SimplePowerDialerProps {
       result: CallResult;
       notes: string;
       askedForWhatsApp: boolean;
+      durationSeconds?: number;
       nextFollowUpDate?: string;
       nextFollowUpTime?: string;
       brochureSent?: boolean;
@@ -72,75 +77,102 @@ interface SimplePowerDialerProps {
   ) => void;
   onOpenLeadModal?: (lead: Lead) => void;
   onOpenUploadModal?: () => void;
+  onOpenTargetModal?: () => void;
   onExit?: () => void;
   initialLeadId?: string;
 }
 
 export type QueueFilter =
+  | 'sheet_all'
+  | 'sheet_pending'
   | 'due_today'
-  | 'pending'
-  | 'followups_tomorrow'
-  | 'not_picked_up'
   | 'interested'
-  | 'won'
-  | 'all';
+  | 'not_picked_up';
 
 export default function SimplePowerDialer({
   leads,
   activeRep,
+  dailyTarget = { contactsTarget: 50, durationMinutesTarget: 120, mode: 'both' },
+  selectedCategory,
+  selectedSheet,
   onSaveCallLog,
   onOpenLeadModal,
   onOpenUploadModal,
+  onOpenTargetModal,
   onExit,
   initialLeadId,
 }: SimplePowerDialerProps) {
   // Queue Filter
-  const [queueFilter, setQueueFilter] = useState<QueueFilter>('pending');
+  const [queueFilter, setQueueFilter] = useState<QueueFilter>('sheet_pending');
   const [currentIndex, setCurrentIndex] = useState<number>(0);
 
-  // Live call timer
+  // Live call timer (per lead)
   const [callTimer, setCallTimer] = useState<number>(0);
   const [isTimerRunning, setIsTimerRunning] = useState<boolean>(true);
+
+  // Total session timer (continuous)
+  const [sessionTimer, setSessionTimer] = useState<number>(0);
 
   // Form states for current lead
   const [currentNotes, setCurrentNotes] = useState<string>('');
   const [currentRequirement, setCurrentRequirement] = useState<string>('');
+  const [selectedDisposition, setSelectedDisposition] = useState<CallResult | null>(null);
+
+  // Callback / Follow-up state
   const [isFollowUpOpen, setIsFollowUpOpen] = useState<boolean>(false);
   const [customFollowUpDate, setCustomFollowUpDate] = useState<string>('');
-  const [customFollowUpTime, setCustomFollowUpTime] = useState<string>('10:00');
+  const [customFollowUpTime, setCustomFollowUpTime] = useState<string>('11:00');
+
+  // Deal Won state
   const [isDealWonOpen, setIsDealWonOpen] = useState<boolean>(false);
   const [dealWonAmount, setDealWonAmount] = useState<number>(25000);
+
+  // Script UI tab: 'pitch' | 'objections' | 'questions'
+  const [scriptTab, setScriptTab] = useState<'pitch' | 'objections' | 'questions'>('pitch');
+  const [selectedObjectionIndex, setSelectedObjectionIndex] = useState<number>(0);
+
+  // Modals & Feedback
   const [isWAModalOpen, setIsWAModalOpen] = useState<boolean>(false);
   const [isCopied, setIsCopied] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Brochure Config
-  const [brochureConfig, setBrochureConfig] = useState<BrochureConfig>(() =>
-    getStoredBrochureConfig()
-  );
-  const [isEditingBrochure, setIsEditingBrochure] = useState<boolean>(false);
-  const [editBrochureUrl, setEditBrochureUrl] = useState<string>('');
+  const [brochureConfig] = useState<BrochureConfig>(() => getStoredBrochureConfig());
 
   const todayStr = new Date().toISOString().slice(0, 10);
-  const tomorrow = new Date(Date.now() + 86400000);
-  const tomorrowStr = tomorrow.toISOString().slice(0, 10);
-  const inTwoDaysStr = new Date(Date.now() + 86400000 * 2).toISOString().slice(0, 10);
+  const tomorrowStr = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
 
-  // Filter leads according to selected queue
+  // Total session timer interval
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setSessionTimer((prev) => prev + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Filter leads based on selectedCategory / selectedSheet and queueFilter
   const queueLeads = useMemo(() => {
-    let repLeads = leads;
+    let list = leads;
+
+    // Filter by Rep if specified
     if (activeRep !== 'All' && activeRep !== 'All Reps') {
-      repLeads = leads.filter((l) => l.assignedRep === activeRep);
+      list = list.filter((l) => l.assignedRep === activeRep);
     }
 
+    // Filter by Sheet if provided
+    if (selectedSheet) {
+      list = list.filter(
+        (l) => (l.sheetName || '').toLowerCase() === selectedSheet.toLowerCase()
+      );
+    } else if (selectedCategory) {
+      list = list.filter(
+        (l) => (l.groupName || '').toLowerCase() === selectedCategory.toLowerCase()
+      );
+    }
+
+    // Secondary Filter (Pending vs All vs Due Today)
     switch (queueFilter) {
-      case 'due_today':
-        return repLeads.filter(
-          (l) => l.followUpDate && l.followUpDate <= todayStr && l.status !== 'Won' && l.callResult !== 'Deal Won'
-        );
-      case 'pending':
-        // Leads that haven't been called yet or were marked as Not Picked Up / Callback
-        return repLeads.filter(
+      case 'sheet_pending':
+        return list.filter(
           (l) =>
             l.status === 'New' ||
             l.callResult === 'Not Picked Up' ||
@@ -148,27 +180,25 @@ export default function SimplePowerDialer({
             l.callResult === 'Call Back Later' ||
             l.callResult === 'Callback'
         );
-      case 'followups_tomorrow':
-        return repLeads.filter((l) => l.followUpDate === tomorrowStr);
-      case 'not_picked_up':
-        return repLeads.filter(
-          (l) => l.callResult === 'Not Picked Up' || l.callResult === 'No Answer'
+      case 'due_today':
+        return list.filter(
+          (l) => l.followUpDate && l.followUpDate <= todayStr && l.status !== 'Won' && l.callResult !== 'Deal Won'
         );
       case 'interested':
-        return repLeads.filter(
+        return list.filter(
           (l) => l.status === 'Interested' || l.callResult === 'Interested'
         );
-      case 'won':
-        return repLeads.filter(
-          (l) => l.status === 'Won' || l.callResult === 'Deal Won'
+      case 'not_picked_up':
+        return list.filter(
+          (l) => l.callResult === 'Not Picked Up' || l.callResult === 'No Answer'
         );
-      case 'all':
+      case 'sheet_all':
       default:
-        return repLeads;
+        return list;
     }
-  }, [leads, activeRep, queueFilter, todayStr, tomorrowStr]);
+  }, [leads, activeRep, selectedCategory, selectedSheet, queueFilter, todayStr]);
 
-  // Today's total calls counter
+  // Today's calls count across CRM
   const todayCallsCount = useMemo(() => {
     let count = 0;
     leads.forEach((l) => {
@@ -181,7 +211,23 @@ export default function SimplePowerDialer({
     return count;
   }, [leads, todayStr]);
 
-  // Set initial lead if provided
+  // Average call duration per call (historical calculation from logged durationSeconds)
+  const averageCallDurationSec = useMemo(() => {
+    let totalSec = 0;
+    let loggedCount = 0;
+    leads.forEach((l) => {
+      l.callLogs?.forEach((log) => {
+        if (log.durationSeconds && log.durationSeconds > 0) {
+          totalSec += log.durationSeconds;
+          loggedCount++;
+        }
+      });
+    });
+    if (loggedCount === 0) return 90; // Default 1m 30s benchmark
+    return Math.round(totalSec / loggedCount);
+  }, [leads]);
+
+  // Set initial lead if requested
   useEffect(() => {
     if (initialLeadId && queueLeads.length > 0) {
       const idx = queueLeads.findIndex((l) => l.id === initialLeadId);
@@ -191,7 +237,7 @@ export default function SimplePowerDialer({
     }
   }, [initialLeadId, queueLeads]);
 
-  // Ensure current index is within bounds
+  // Ensure index remains in bounds
   useEffect(() => {
     if (currentIndex >= queueLeads.length && queueLeads.length > 0) {
       setCurrentIndex(queueLeads.length - 1);
@@ -200,18 +246,32 @@ export default function SimplePowerDialer({
 
   const currentLead: Lead | undefined = queueLeads[currentIndex];
 
-  // Reset note and timer when lead changes
+  // Dynamic script tailored for the active Lead's Category (Airbnb, Hotels, Manufacturing, or General)
+  const activeScriptConfig: CallScriptConfig = useMemo(() => {
+    const categoryToUse = currentLead?.groupName || selectedCategory;
+    return getScriptForCategory(categoryToUse);
+  }, [currentLead?.groupName, selectedCategory]);
+
+  // Replace [Rep Name] in the opening script with the active telecaller rep
+  const personalizedOpeningScript = useMemo(() => {
+    const rep = activeRep !== 'All' && activeRep !== 'All Reps' ? activeRep : 'Aman';
+    return (activeScriptConfig.openingScript || '').replace(/\[Rep Name\]/g, rep);
+  }, [activeScriptConfig, activeRep]);
+
+  // Reset note, requirement, and call timer when lead changes
   useEffect(() => {
     if (currentLead) {
       setCurrentNotes('');
       setCurrentRequirement(currentLead.requirement || '');
+      setSelectedDisposition(null);
+      setIsFollowUpOpen(false);
+      setIsDealWonOpen(false);
       setCallTimer(0);
       setIsTimerRunning(true);
-      setIsFollowUpOpen(false);
     }
   }, [currentLead?.id]);
 
-  // Call timer interval
+  // Live call timer tick
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null;
     if (isTimerRunning && currentLead) {
@@ -230,6 +290,13 @@ export default function SimplePowerDialer({
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const formatHumanDuration = (totalSec: number) => {
+    const mins = Math.floor(totalSec / 60);
+    const secs = totalSec % 60;
+    if (mins === 0) return `${secs}s`;
+    return `${mins}m ${secs < 10 ? '0' : ''}${secs}s`;
+  };
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => {
@@ -241,7 +308,7 @@ export default function SimplePowerDialer({
     if (currentIndex < queueLeads.length - 1) {
       setCurrentIndex((prev) => prev + 1);
     } else {
-      showToast('🎉 You have reached the end of this calling queue!');
+      showToast('🎉 You have reached the end of this sheet!');
     }
   }, [currentIndex, queueLeads.length]);
 
@@ -251,7 +318,7 @@ export default function SimplePowerDialer({
     }
   }, [currentIndex]);
 
-  // Save disposition and advance to next lead
+  // Record disposition and advance to next lead
   const handleRecordDisposition = useCallback((
     result: CallResult,
     options?: {
@@ -280,6 +347,7 @@ export default function SimplePowerDialer({
         result,
         notes: currentNotes,
         askedForWhatsApp: !!currentLead.brochureSent,
+        durationSeconds: callTimer,
         nextFollowUpDate: followUpDate,
         nextFollowUpTime: followUpTime,
         brochureSent: currentLead.brochureSent,
@@ -295,89 +363,34 @@ export default function SimplePowerDialer({
       }
     );
 
-    let toastText = `✓ Logged "${result}"`;
+    let toastText = `✓ Logged "${result}" (${formatHumanDuration(callTimer)})`;
     if (result === 'Deal Won') {
       toastText = `🎉 Deal Won! (₹${(dealValue || 25000).toLocaleString('en-IN')})`;
     } else if (followUpDate) {
-      toastText += ` (Follow-up: ${followUpDate} ${followUpTime || ''})`;
+      toastText += ` • Callback: ${followUpDate} ${followUpTime || ''}`;
     }
     showToast(toastText);
+    setSelectedDisposition(result);
     setIsDealWonOpen(false);
+    setIsFollowUpOpen(false);
 
     if (autoAdvance) {
       if (currentIndex < queueLeads.length - 1) {
         setCurrentIndex((prev) => prev + 1);
       } else {
-        showToast('🎉 Finished all leads in this queue!');
+        showToast('🎉 Finished all leads in this sheet queue!');
       }
     }
-  }, [currentLead, activeRep, currentNotes, currentIndex, queueLeads.length, onSaveCallLog]);
-
-  // Send brochure on WhatsApp
-  const handleSendBrochureWhatsApp = () => {
-    if (!currentLead) return;
-
-    const msg = formatBrochureMessage(
-      brochureConfig.whatsappMessageTemplate,
-      brochureConfig.brochureUrl,
-      currentLead.ownerName || currentLead.businessName,
-      currentLead.businessName,
-      activeRep
-    );
-
-    const waLink = createWhatsAppLink(currentLead.phone, msg);
-    window.open(waLink, '_blank');
-
-    // Automatically mark brochure as sent
-    const nowIso = new Date().toISOString();
-    onSaveCallLog(
-      currentLead.id,
-      {
-        repName: activeRep,
-        result: 'Connected',
-        notes: currentNotes.trim() ? `${currentNotes.trim()} | Sent brochure on WhatsApp` : 'Sent brochure on WhatsApp',
-        askedForWhatsApp: true,
-        brochureSent: true,
-      },
-      {
-        requirement: currentRequirement.trim(),
-        notes: currentNotes.trim()
-          ? (currentLead.notes ? `${currentLead.notes} | ${currentNotes.trim()}` : currentNotes.trim())
-          : currentLead.notes,
-        brochureSent: true,
-        brochureSentDate: nowIso.slice(0, 10),
-      }
-    );
-
-    showToast('📲 WhatsApp opened & marked Brochure as Sent!');
-  };
-
-  const handleToggleBrochureSent = () => {
-    if (!currentLead) return;
-    const newStatus = !currentLead.brochureSent;
-    const nowIso = new Date().toISOString();
-
-    onSaveCallLog(
-      currentLead.id,
-      {
-        repName: activeRep,
-        result: currentLead.callResult || 'Connected',
-        notes: currentNotes.trim(),
-        askedForWhatsApp: newStatus,
-        brochureSent: newStatus,
-      },
-      {
-        requirement: currentRequirement.trim(),
-        notes: currentNotes.trim()
-          ? (currentLead.notes ? `${currentLead.notes} | ${currentNotes.trim()}` : currentNotes.trim())
-          : currentLead.notes,
-        brochureSent: newStatus,
-        brochureSentDate: newStatus ? nowIso.slice(0, 10) : undefined,
-      }
-    );
-
-    showToast(newStatus ? '✓ Marked Brochure as Sent' : 'Marked Brochure as Not Sent');
-  };
+  }, [
+    currentLead,
+    activeRep,
+    currentNotes,
+    currentRequirement,
+    callTimer,
+    currentIndex,
+    queueLeads.length,
+    onSaveCallLog,
+  ]);
 
   const handleCopyPhone = () => {
     if (!currentLead) return;
@@ -386,21 +399,9 @@ export default function SimplePowerDialer({
     setTimeout(() => setIsCopied(false), 2000);
   };
 
-  const handleSaveBrochureConfig = () => {
-    const updated = {
-      ...brochureConfig,
-      brochureUrl: editBrochureUrl.trim() || brochureConfig.brochureUrl,
-    };
-    setBrochureConfig(updated);
-    saveStoredBrochureConfig(updated);
-    setIsEditingBrochure(false);
-    showToast('✓ Updated Brochure link');
-  };
-
   // Keyboard navigation shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't trigger if user is typing in a textarea or input
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
 
@@ -410,12 +411,10 @@ export default function SimplePowerDialer({
         handlePrevious();
       } else if (e.key.toLowerCase() === 'n') {
         handleRecordDisposition('Not Picked Up');
-      } else if (e.key.toLowerCase() === 'x') {
-        handleRecordDisposition('Not Interested');
       } else if (e.key.toLowerCase() === 'i') {
         handleRecordDisposition('Interested', { autoAdvance: false });
-      } else if (e.key.toLowerCase() === 'w') {
-        handleSendBrochureWhatsApp();
+      } else if (e.key.toLowerCase() === 'x') {
+        handleRecordDisposition('Not Interested');
       }
     };
 
@@ -427,1150 +426,839 @@ export default function SimplePowerDialer({
   const rawCleanPhone = currentLead ? cleanPhoneNumber(currentLead.phone) : '';
   const telLink = `tel:${rawCleanPhone.startsWith('+') ? rawCleanPhone : `+${rawCleanPhone}`}`;
 
-  // Progress percentage
+  // Direct WhatsApp link
+  const waDirectLink = currentLead
+    ? createWhatsAppLink(
+        currentLead.phone,
+        `Hello ${currentLead.ownerName || currentLead.businessName}, this side ${
+          activeRep !== 'All' && activeRep !== 'All Reps' ? activeRep : 'Aman'
+        } from Intellicor. Sharing our catalog and demo link as discussed.`
+      )
+    : '#';
+
   const totalInQueue = queueLeads.length;
   const progressPercent = totalInQueue > 0 ? Math.round(((currentIndex + 1) / totalInQueue) * 100) : 0;
 
+  const targetPercentage = dailyTarget.contactsTarget > 0
+    ? Math.min(100, Math.round((todayCallsCount / dailyTarget.contactsTarget) * 100))
+    : 0;
+
+  const sessionMinutes = Math.floor(sessionTimer / 60);
+
   return (
-    <div className="dialer-wrapper">
-      {/* Toast Notification */}
+    <div className="telecaller-workspace">
+      {/* Toast Alert */}
       {toastMessage && (
-        <div className="dialer-toast">
+        <div className="telecaller-toast">
           <span>{toastMessage}</span>
         </div>
       )}
 
-      {/* Top Bar: Queue Selector & Progress */}
-      <div className="dialer-top-bar">
-        <div className="queue-filter-group">
-          <span className="queue-label">
-            <Layers size={15} /> Queue:
-          </span>
-          <div className="queue-pills">
-            {leads.filter((l) => l.followUpDate && l.followUpDate <= todayStr && l.status !== 'Won' && l.callResult !== 'Deal Won').length > 0 && (
-              <button
-                onClick={() => {
-                  setQueueFilter('due_today');
-                  setCurrentIndex(0);
-                }}
-                className={`queue-pill pill-alert ${queueFilter === 'due_today' ? 'active' : ''}`}
-              >
-                🔥 Due Today ({leads.filter((l) => l.followUpDate && l.followUpDate <= todayStr && l.status !== 'Won' && l.callResult !== 'Deal Won').length})
-              </button>
-            )}
-            <button
-              onClick={() => {
-                setQueueFilter('pending');
-                setCurrentIndex(0);
-              }}
-              className={`queue-pill ${queueFilter === 'pending' ? 'active' : ''}`}
-            >
-              Pending Calls ({leads.filter((l) => l.status === 'New' || l.callResult === 'Not Picked Up' || l.callResult === 'Call Back Later').length})
-            </button>
-            <button
-              onClick={() => {
-                setQueueFilter('followups_tomorrow');
-                setCurrentIndex(0);
-              }}
-              className={`queue-pill ${queueFilter === 'followups_tomorrow' ? 'active' : ''}`}
-            >
-              Follow-ups Tomorrow ({leads.filter((l) => l.followUpDate === tomorrowStr).length})
-            </button>
-            <button
-              onClick={() => {
-                setQueueFilter('not_picked_up');
-                setCurrentIndex(0);
-              }}
-              className={`queue-pill ${queueFilter === 'not_picked_up' ? 'active' : ''}`}
-            >
-              Not Picked Up ({leads.filter((l) => l.callResult === 'Not Picked Up' || l.callResult === 'No Answer').length})
-            </button>
-            <button
-              onClick={() => {
-                setQueueFilter('interested');
-                setCurrentIndex(0);
-              }}
-              className={`queue-pill ${queueFilter === 'interested' ? 'active' : ''}`}
-            >
-              Interested ({leads.filter((l) => l.status === 'Interested').length})
-            </button>
-            {leads.filter((l) => l.status === 'Won' || l.callResult === 'Deal Won').length > 0 && (
-              <button
-                onClick={() => {
-                  setQueueFilter('won');
-                  setCurrentIndex(0);
-                }}
-                className={`queue-pill pill-won ${queueFilter === 'won' ? 'active' : ''}`}
-              >
-                🏆 Won ({leads.filter((l) => l.status === 'Won' || l.callResult === 'Deal Won').length})
-              </button>
-            )}
-            <button
-              onClick={() => {
-                setQueueFilter('all');
-                setCurrentIndex(0);
-              }}
-              className={`queue-pill ${queueFilter === 'all' ? 'active' : ''}`}
-            >
-              All Leads ({leads.length})
-            </button>
-          </div>
-        </div>
-
-        <div className="top-right-controls">
-          <div className="dialer-call-counter" title="Calls made today towards daily solo goal (50)">
-            <Target size={14} className="text-blue" />
-            <span>Today: <strong>{todayCallsCount}</strong> / 50</span>
-          </div>
-          {onOpenUploadModal && (
-            <button onClick={onOpenUploadModal} className="btn-upload-more">
-              + Upload Excel
-            </button>
-          )}
+      {/* ========================================================= */}
+      {/* 1. TOP BAR: BREADCRUMBS, QUEUE FILTERS, AND EXIT BUTTON   */}
+      {/* ========================================================= */}
+      <header className="telecaller-top-nav">
+        <div className="nav-left-group">
           {onExit && (
-            <button onClick={onExit} className="btn-exit" title="Back to table view">
-              <X size={18} />
-              <span>Back</span>
+            <button onClick={onExit} className="btn-back-to-hub">
+              <ArrowLeft size={16} />
+              <span>Groups Hub</span>
             </button>
           )}
-        </div>
-      </div>
 
-      {/* Progress & Navigation Bar */}
-      <div className="dialer-progress-bar-container">
-        <div className="progress-info-row">
-          <div className="progress-text">
-            <strong>Calling Lead {totalInQueue > 0 ? currentIndex + 1 : 0}</strong> of{' '}
-            {totalInQueue} in queue
+          <div className="breadcrumb-pill">
+            <FolderOpen size={15} className="text-blue" />
+            <span className="crumb-cat">{selectedCategory || currentLead?.groupName || 'All Categories'}</span>
+            <ChevronRight size={13} className="text-muted" />
+            <span className="crumb-sheet">{selectedSheet || currentLead?.sheetName || 'Active Sheet'}</span>
           </div>
-          <div className="nav-btn-group">
+
+          <div className="queue-quick-toggle">
+            <button
+              type="button"
+              className={`queue-sub-btn ${queueFilter === 'sheet_pending' ? 'active' : ''}`}
+              onClick={() => {
+                setQueueFilter('sheet_pending');
+                setCurrentIndex(0);
+              }}
+            >
+              Pending Calls
+            </button>
+            <button
+              type="button"
+              className={`queue-sub-btn ${queueFilter === 'sheet_all' ? 'active' : ''}`}
+              onClick={() => {
+                setQueueFilter('sheet_all');
+                setCurrentIndex(0);
+              }}
+            >
+              All in Sheet ({leads.filter((l) => (l.sheetName || '').toLowerCase() === (selectedSheet || '').toLowerCase()).length || leads.length})
+            </button>
+          </div>
+        </div>
+
+        {/* Lead Progress & Next/Prev Controls */}
+        <div className="nav-center-progress">
+          <div className="lead-counter-text">
+            <strong>Contact {totalInQueue > 0 ? currentIndex + 1 : 0}</strong> of {totalInQueue}
+          </div>
+          <div className="lead-nav-buttons">
             <button
               onClick={handlePrevious}
               disabled={currentIndex === 0}
-              className="nav-btn"
-              title="Previous lead (Left Arrow)"
+              className="btn-nav-step"
+              title="Previous contact (Left Arrow)"
             >
-              <ArrowLeft size={16} />
+              <ArrowLeft size={15} />
               <span>Prev</span>
             </button>
             <button
               onClick={handleNext}
               disabled={currentIndex >= totalInQueue - 1}
-              className="nav-btn"
-              title="Skip / Next lead (Right Arrow)"
+              className="btn-nav-step"
+              title="Skip to next contact (Right Arrow)"
             >
               <span>Skip / Next</span>
-              <SkipForward size={16} />
+              <SkipForward size={15} />
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* ========================================================= */}
+      {/* 2. TIMERS & TARGET WIDGET BAR                             */}
+      {/* ========================================================= */}
+      <section className="timers-and-target-strip">
+        {/* Active Call Timer */}
+        <div className="timer-badge-box active-call-timer">
+          <div className="timer-box-label">
+            <PhoneCall size={14} className="text-blue" />
+            <span>Call Duration</span>
+          </div>
+          <div className="timer-clock-digits">
+            <Clock size={16} className="text-blue" />
+            <span>{formatTimer(callTimer)}</span>
+          </div>
+          <div className="timer-micro-actions">
+            <button
+              type="button"
+              onClick={() => setIsTimerRunning(!isTimerRunning)}
+              className="btn-mini-timer"
+              title={isTimerRunning ? 'Pause timer' : 'Resume timer'}
+            >
+              {isTimerRunning ? <Pause size={12} /> : <Play size={12} />}
+            </button>
+            <button
+              type="button"
+              onClick={() => setCallTimer(0)}
+              className="btn-mini-timer"
+              title="Reset timer to 0"
+            >
+              <RotateCcw size={12} />
             </button>
           </div>
         </div>
 
-        <div className="progress-track">
-          <div
-            className="progress-fill"
-            style={{ width: `${progressPercent}%` }}
-          />
+        {/* Average Call Duration per Call */}
+        <div className="timer-badge-box">
+          <div className="timer-box-label">
+            <Clock size={14} className="text-slate" />
+            <span>Avg / Call</span>
+          </div>
+          <div className="stat-digits">
+            <span>{formatHumanDuration(averageCallDurationSec)}</span>
+          </div>
+          <span className="micro-subtext">calculated avg</span>
         </div>
+
+        {/* Total Session Duration */}
+        <div className="timer-badge-box">
+          <div className="timer-box-label">
+            <Clock size={14} className="text-emerald" />
+            <span>Session Duration</span>
+          </div>
+          <div className="stat-digits">
+            <span>{formatTimer(sessionTimer)}</span>
+          </div>
+          <span className="micro-subtext">{sessionMinutes} mins active</span>
+        </div>
+
+        {/* Daily Target Progress Widget */}
+        <div
+          className="timer-badge-box target-summary-box"
+          onClick={onOpenTargetModal}
+          title="Click to edit your daily target"
+        >
+          <div className="target-box-header">
+            <div className="target-box-label">
+              <Target size={14} className="text-indigo" />
+              <span>Daily Target</span>
+            </div>
+            <button type="button" className="btn-edit-target" onClick={onOpenTargetModal}>
+              <Edit3 size={11} />
+              <span>Edit Goal</span>
+            </button>
+          </div>
+
+          <div className="target-dual-progress">
+            <div className="target-progress-bar-track">
+              <div
+                className="target-progress-bar-fill"
+                style={{ width: `${targetPercentage}%` }}
+              />
+            </div>
+            <div className="target-dual-labels">
+              <span>
+                <strong>{todayCallsCount}</strong> / {dailyTarget.contactsTarget} calls ({targetPercentage}%)
+              </span>
+              <span>
+                <strong>{sessionMinutes}m</strong> / {dailyTarget.durationMinutesTarget}m
+              </span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Progress track */}
+      <div className="sheet-progress-strip">
+        <div
+          className="sheet-progress-fill"
+          style={{ width: `${progressPercent}%` }}
+        />
       </div>
 
-      {/* Empty State */}
+      {/* ========================================================= */}
+      {/* 3. MAIN LEAD CARD + THREE CORE COLUMNS                    */}
+      {/* ========================================================= */}
       {queueLeads.length === 0 ? (
-        <div className="empty-queue-card">
-          <CheckCircle2 size={48} className="empty-icon text-success" />
-          <h3>All caught up in this queue!</h3>
+        <div className="empty-calling-card">
+          <CheckCircle2 size={54} className="text-emerald" />
+          <h2>All Leads Completed in this Queue!</h2>
           <p>
-            There are no leads matching &quot;{queueFilter.replace('_', ' ')}&quot;. You can
-            switch to &quot;All Leads&quot; or upload a new Excel sheet to keep calling.
+            You have called all contacts matching this filter. Switch to &quot;All in Sheet&quot; or return to the Groups Hub.
           </p>
-          <div className="empty-actions">
+          <div className="empty-actions-row">
             <button
-              onClick={() => setQueueFilter('all')}
-              className="btn-switch-all"
+              type="button"
+              onClick={() => setQueueFilter('sheet_all')}
+              className="btn-switch-queue-all"
             >
-              View All Leads ({leads.length})
+              View All Contacts in Sheet
             </button>
-            {onOpenUploadModal && (
-              <button onClick={onOpenUploadModal} className="btn-upload-primary">
-                📁 Upload New Excel Sheet
+            {onExit && (
+              <button type="button" onClick={onExit} className="btn-return-hub">
+                ← Return to Groups Hub
               </button>
             )}
           </div>
         </div>
       ) : currentLead ? (
-        /* MAIN CALLING WORKSPACE */
-        <div className="dialer-content-grid">
-          {/* LEFT COLUMN: CLIENT DETAILS & CALL ACTIONS */}
-          <div className="client-main-card">
-            {/* Lead Header */}
-            <div className="client-header">
-              <div>
-                <span className="lead-seq-badge">
-                  Lead #{currentIndex + 1}
-                </span>
-                <h1 className="client-business-name">{currentLead.businessName}</h1>
-                {currentLead.ownerName && currentLead.ownerName !== currentLead.businessName && (
-                  <div className="client-owner-name">
-                    <User size={15} />
-                    <span>Contact: {currentLead.ownerName}</span>
-                  </div>
+        <div className="calling-workspace-body">
+          {/* CLIENT CONTACT BANNER */}
+          <section className="client-contact-banner">
+            <div className="contact-main-info">
+              <div className="contact-title-row">
+                <span className="contact-seq-pill">#{currentIndex + 1}</span>
+                <h1 className="contact-business-name">{currentLead.businessName}</h1>
+                {currentLead.status && (
+                  <span className={`status-pill status-${currentLead.status.toLowerCase().replace(/\s+/g, '-')}`}>
+                    {currentLead.status}
+                  </span>
                 )}
               </div>
 
-              {/* Call Timer */}
-              <div className="call-timer-box">
-                <div className="timer-display">
-                  <Clock size={16} className="timer-icon" />
-                  <span>{formatTimer(callTimer)}</span>
+              <div className="contact-meta-row">
+                {currentLead.ownerName && currentLead.ownerName !== currentLead.businessName && (
+                  <div className="meta-item">
+                    <User size={14} className="text-muted" />
+                    <span>Contact: <strong>{currentLead.ownerName}</strong></span>
+                  </div>
+                )}
+                {currentLead.city && (
+                  <div className="meta-item">
+                    <MapPin size={14} className="text-muted" />
+                    <span>{currentLead.city}</span>
+                  </div>
+                )}
+                <div className="meta-item">
+                  <FolderOpen size={14} className="text-muted" />
+                  <span>Category: <strong>{currentLead.groupName || 'General'}</strong></span>
                 </div>
-                <button
-                  onClick={() => setIsTimerRunning(!isTimerRunning)}
-                  className="timer-pause-btn"
-                  title={isTimerRunning ? 'Pause timer' : 'Resume timer'}
-                >
-                  {isTimerRunning ? <Pause size={12} /> : <Play size={12} />}
-                </button>
-                <button
-                  onClick={() => setCallTimer(0)}
-                  className="timer-pause-btn"
-                  title="Reset timer"
-                >
-                  <RotateCcw size={12} />
-                </button>
               </div>
             </div>
 
-            {/* Prominent Phone & Quick Call Actions */}
-            <div className="phone-call-banner">
-              <div className="phone-number-group">
-                <span className="phone-label">PHONE NUMBER</span>
-                <div className="phone-val-row">
-                  <span className="phone-display">{currentLead.phone}</span>
+            {/* Direct Dialing & WhatsApp Actions */}
+            <div className="contact-action-buttons">
+              <div className="phone-number-pill">
+                <span className="phone-num-text">{currentLead.phone}</span>
+                <button
+                  type="button"
+                  onClick={handleCopyPhone}
+                  className="btn-copy-num"
+                  title="Copy number"
+                >
+                  {isCopied ? <Check size={14} className="text-emerald" /> : <Copy size={14} />}
+                </button>
+              </div>
+
+              <a
+                href={telLink}
+                className="btn-action-call"
+                title="Dial directly via phone / FaceTime"
+              >
+                <PhoneCall size={18} />
+                <span>Call Now</span>
+              </a>
+
+              <a
+                href={waDirectLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn-action-whatsapp"
+                title="Open WhatsApp chat with pre-written message"
+              >
+                <MessageCircle size={18} />
+                <span>WhatsApp</span>
+              </a>
+            </div>
+          </section>
+
+          {/* ========================================================= */}
+          {/* THE THREE MAIN PILLARS: RESPONSE, NOTES, SCRIPT          */}
+          {/* ========================================================= */}
+          <div className="three-pillars-grid">
+            {/* ----------------------------------------------------- */}
+            {/* PILLAR 1: THE SCRIPT (Sales Pitch & Objections)       */}
+            {/* ----------------------------------------------------- */}
+            <div className="pillar-card pillar-script">
+              <div className="pillar-header">
+                <div className="pillar-header-left">
+                  <div className="pillar-icon-badge badge-script">
+                    <FileText size={16} />
+                  </div>
+                  <div>
+                    <h3 className="pillar-title">3. The Script</h3>
+                    <span className="pillar-subtitle">
+                      Tailored for {currentLead.groupName || 'Local Business'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Subtabs: Pitch / Objections / Questions */}
+                <div className="script-tab-pills">
                   <button
-                    onClick={handleCopyPhone}
-                    className="btn-copy-phone"
-                    title="Copy phone number"
+                    type="button"
+                    className={`script-pill ${scriptTab === 'pitch' ? 'active' : ''}`}
+                    onClick={() => setScriptTab('pitch')}
                   >
-                    {isCopied ? <Check size={14} className="text-green" /> : <Copy size={14} />}
-                    <span>{isCopied ? 'Copied!' : 'Copy'}</span>
+                    Pitch
+                  </button>
+                  <button
+                    type="button"
+                    className={`script-pill ${scriptTab === 'objections' ? 'active' : ''}`}
+                    onClick={() => setScriptTab('objections')}
+                  >
+                    Objections
+                  </button>
+                  <button
+                    type="button"
+                    className={`script-pill ${scriptTab === 'questions' ? 'active' : ''}`}
+                    onClick={() => setScriptTab('questions')}
+                  >
+                    Questions
                   </button>
                 </div>
               </div>
 
-              <div className="call-buttons-row">
-                {/* 1-Tap Dial */}
-                <a
-                  href={telLink}
-                  className="btn-dial-primary"
-                  title="Click to dial directly via phone / FaceTime / softphone"
-                >
-                  <PhoneCall size={20} />
-                  <span>Call Now</span>
-                </a>
+              <div className="pillar-content script-scrollable-content">
+                {scriptTab === 'pitch' && (
+                  <div className="script-pitch-pane">
+                    <div className="script-quote-box">
+                      <p className="opening-script-text">&ldquo;{personalizedOpeningScript}&rdquo;</p>
+                    </div>
 
-                {/* 1-Tap WhatsApp Templates & Direct Chat */}
-                <button
-                  type="button"
-                  onClick={() => setIsWAModalOpen(true)}
-                  className="btn-wa-direct"
-                  title="Open 1-Tap WhatsApp templates or direct chat"
-                >
-                  <MessageCircle size={19} />
-                  <span>WhatsApp</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Client Basic Details Chips */}
-            <div className="client-meta-chips">
-              {currentLead.city && (
-                <div className="meta-chip">
-                  <MapPin size={14} className="text-blue" />
-                  <span>{currentLead.city}</span>
-                </div>
-              )}
-              {currentLead.industry && (
-                <div className="meta-chip">
-                  <Building2 size={14} className="text-slate" />
-                  <span>{currentLead.industry}</span>
-                </div>
-              )}
-              <div className="meta-chip">
-                <History size={14} />
-                <span>
-                  {currentLead.callLogs?.length || 0} previous call
-                  {(currentLead.callLogs?.length || 0) === 1 ? '' : 's'}
-                </span>
-              </div>
-              {currentLead.status && (
-                <div className={`meta-chip chip-status-${currentLead.status.toLowerCase().replace(/\s+/g, '-')}`}>
-                  <span>Status: {currentLead.status}</span>
-                </div>
-              )}
-            </div>
-
-            {/* Requirement / Notes Box (Always editable so user can write their own) */}
-            <div className="requirement-box">
-              <div className="requirement-title">
-                <FileText size={15} />
-                <span>Client Requirement / Notes:</span>
-              </div>
-              <textarea
-                rows={2}
-                value={currentRequirement}
-                onChange={(e) => setCurrentRequirement(e.target.value)}
-                placeholder="Type or paste client requirement / inquiry details here..."
-                className="requirement-textarea"
-              />
-            </div>
-
-            {/* Quick Live Notes Input */}
-            <div className="notes-entry-box">
-              <label className="notes-label">
-                <FileText size={14} /> Quick Notes from this call:
-              </label>
-              <textarea
-                rows={2}
-                value={currentNotes}
-                onChange={(e) => setCurrentNotes(e.target.value)}
-                placeholder="Type any quick points, pricing discussed, or client feedback here..."
-                className="dialer-textarea"
-              />
-            </div>
-
-            {/* Previous Call Logs Timeline */}
-            {currentLead.callLogs && currentLead.callLogs.length > 0 && (
-              <div className="past-calls-box">
-                <div className="past-calls-title">
-                  <History size={14} />
-                  <span>Previous Call Notes & Outcomes ({currentLead.callLogs.length}):</span>
-                </div>
-                <div className="past-calls-list">
-                  {currentLead.callLogs
-                    .slice()
-                    .reverse()
-                    .slice(0, 4)
-                    .map((log, idx) => (
-                      <div key={log.id || idx} className="past-call-item">
-                        <div className="past-call-top">
-                          <span className={`log-outcome-badge badge-${(log.result || '').toLowerCase().replace(/\s+/g, '-')}`}>
-                            {log.result}
-                          </span>
-                          <span className="past-call-date">
-                            {log.date ? new Date(log.date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}
-                          </span>
-                        </div>
-                        {log.notes && <p className="past-call-notes">&ldquo;{log.notes}&rdquo;</p>}
-                        {log.nextFollowUpDate && (
-                          <span className="past-call-followup">
-                            Follow-up: {log.nextFollowUpDate} {log.nextFollowUpTime || ''}
-                          </span>
-                        )}
+                    {/* Pitch Stages Checklist */}
+                    {activeScriptConfig.stages && activeScriptConfig.stages.length > 0 && (
+                      <div className="pitch-stages-list">
+                        <span className="stages-header-label">Call Flow Stages:</span>
+                        {activeScriptConfig.stages.map((stg, sIdx) => (
+                          <div key={stg.id || sIdx} className="stage-item">
+                            <span className="stage-index-pill">{sIdx + 1}</span>
+                            <div className="stage-text">
+                              <span className="stage-name">{stg.stageName}</span>
+                              <span className="stage-desc">{stg.description}</span>
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    ))}
+                    )}
+                  </div>
+                )}
+
+                {scriptTab === 'objections' && (
+                  <div className="script-objections-pane">
+                    <span className="stages-header-label">Handle Objections Like a Pro:</span>
+                    <div className="objection-selector-chips">
+                      {activeScriptConfig.objections.map((obj, oIdx) => (
+                        <button
+                          key={obj.id || oIdx}
+                          type="button"
+                          className={`objection-chip ${
+                            selectedObjectionIndex === oIdx ? 'active' : ''
+                          }`}
+                          onClick={() => setSelectedObjectionIndex(oIdx)}
+                        >
+                          {obj.objection}
+                        </button>
+                      ))}
+                    </div>
+
+                    {activeScriptConfig.objections[selectedObjectionIndex] && (
+                      <div className="objection-reply-card">
+                        <div className="obj-question">
+                          <ShieldAlert size={15} className="text-amber" />
+                          <span>Client says: &ldquo;{activeScriptConfig.objections[selectedObjectionIndex].objection}&rdquo;</span>
+                        </div>
+                        <div className="obj-reply">
+                          <span className="reply-label">Your Response:</span>
+                          <p>&ldquo;{activeScriptConfig.objections[selectedObjectionIndex].reply}&rdquo;</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {scriptTab === 'questions' && (
+                  <div className="script-questions-pane">
+                    <span className="stages-header-label">High-Value Discovery Questions:</span>
+                    <div className="questions-list">
+                      {activeScriptConfig.counterQuestions.map((q, qIdx) => (
+                        <div key={qIdx} className="question-bubble">
+                          <HelpCircle size={15} className="text-blue" />
+                          <p>&ldquo;{q}&rdquo;</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* ----------------------------------------------------- */}
+            {/* PILLAR 2: CUSTOMER NOTES & REQUIREMENTS               */}
+            {/* ----------------------------------------------------- */}
+            <div className="pillar-card pillar-notes">
+              <div className="pillar-header">
+                <div className="pillar-header-left">
+                  <div className="pillar-icon-badge badge-notes">
+                    <Edit3 size={16} />
+                  </div>
+                  <div>
+                    <h3 className="pillar-title">2. Customer Notes</h3>
+                    <span className="pillar-subtitle">Live note taking &amp; requirements</span>
+                  </div>
                 </div>
               </div>
-            )}
-          </div>
 
-          {/* RIGHT COLUMN: DISPOSITION BUTTONS & BROCHURE SECTION */}
-          <div className="actions-side-panel">
-            {/* SECTION 1: ONE-CLICK OUTCOME / DISPOSITION */}
-            <div className="panel-box disposition-box">
-              <div className="panel-title-row">
-                <h3 className="panel-title">1. What happened on the call?</h3>
-                <span className="panel-subtitle">1-tap logs outcome & advances to next lead</span>
+              <div className="pillar-content notes-content-layout">
+                {/* Client Requirement */}
+                <div className="form-group-field">
+                  <label className="field-label">Requirement / Context:</label>
+                  <input
+                    type="text"
+                    value={currentRequirement}
+                    onChange={(e) => setCurrentRequirement(e.target.value)}
+                    placeholder="e.g. Needs direct booking website, brochure requested"
+                    className="requirement-input"
+                  />
+                </div>
+
+                {/* Live Notes Textarea */}
+                <div className="form-group-field flex-grow-notes">
+                  <label className="field-label">Notes from Current Call:</label>
+                  <textarea
+                    rows={4}
+                    value={currentNotes}
+                    onChange={(e) => setCurrentNotes(e.target.value)}
+                    placeholder="Type key discussion points, pricing, or client feedback here..."
+                    className="notes-textarea"
+                  />
+                </div>
+
+                {/* Quick Append Chips */}
+                <div className="quick-note-chips-row">
+                  {[
+                    '+ Interested in Demo',
+                    '+ Callback Next Week',
+                    '+ WhatsApp Brochure Sent',
+                    '+ Budget Issue',
+                    '+ Decision Maker Not In',
+                  ].map((chip) => (
+                    <button
+                      key={chip}
+                      type="button"
+                      className="note-chip-btn"
+                      onClick={() => {
+                        setCurrentNotes((prev) =>
+                          prev.trim() ? `${prev.trim()} | ${chip.replace('+', '').trim()}` : chip.replace('+', '').trim()
+                        );
+                      }}
+                    >
+                      {chip}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Previous Call Logs Timeline */}
+                {currentLead.callLogs && currentLead.callLogs.length > 0 && (
+                  <div className="call-history-timeline">
+                    <div className="history-header">
+                      <History size={13} />
+                      <span>Past Call History ({currentLead.callLogs.length}):</span>
+                    </div>
+                    <div className="history-items-list">
+                      {currentLead.callLogs.slice(0, 3).map((log, idx) => (
+                        <div key={log.id || idx} className="history-log-item">
+                          <div className="log-badge-line">
+                            <span className="log-result-tag">{log.result}</span>
+                            <span className="log-date-tag">
+                              {log.date ? new Date(log.date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }) : ''}
+                            </span>
+                          </div>
+                          {log.notes && <p className="log-note-text">&ldquo;{log.notes}&rdquo;</p>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* ----------------------------------------------------- */}
+            {/* PILLAR 3: THE RESPONSE (Call Outcomes & Disposition)  */}
+            {/* ----------------------------------------------------- */}
+            <div className="pillar-card pillar-response">
+              <div className="pillar-header">
+                <div className="pillar-header-left">
+                  <div className="pillar-icon-badge badge-response">
+                    <PhoneForwarded size={16} />
+                  </div>
+                  <div>
+                    <h3 className="pillar-title">1. The Response</h3>
+                    <span className="pillar-subtitle">Select outcome &amp; save</span>
+                  </div>
+                </div>
               </div>
 
-              <div className="outcome-buttons-grid">
-                {/* 🔴 Not Picked Up / No Answer */}
-                <button
-                  type="button"
-                  onClick={() => handleRecordDisposition('Not Picked Up')}
-                  className="outcome-btn btn-not-picked"
-                  title="Logs Not Picked Up and moves to next lead (Press N)"
-                >
-                  <PhoneOff size={22} />
-                  <div className="outcome-btn-text">
-                    <span className="outcome-primary">Not Picked Up</span>
-                    <span className="outcome-hint">Ringing / Busy / Switched Off</span>
-                  </div>
-                  <span className="key-shortcut-hint">Key N</span>
-                </button>
+              <div className="pillar-content response-content-layout">
+                {/* OUTCOME BUTTONS GRID */}
+                <div className="outcomes-button-grid">
+                  {/* Interested */}
+                  <button
+                    type="button"
+                    onClick={() => handleRecordDisposition('Interested', { autoAdvance: true })}
+                    className="outcome-card-btn outcome-interested"
+                  >
+                    <ThumbsUp size={20} />
+                    <div className="outcome-label-wrap">
+                      <span className="outcome-name">Interested!</span>
+                      <span className="outcome-desc">High intent / want proposal</span>
+                    </div>
+                  </button>
 
-                {/* ⏰ Call Back Later / Follow-up */}
-                <button
-                  type="button"
-                  onClick={() => setIsFollowUpOpen(!isFollowUpOpen)}
-                  className={`outcome-btn btn-callback ${isFollowUpOpen ? 'is-active-drop' : ''}`}
-                  title="Open follow-up schedule options (Press B)"
-                >
-                  <PhoneForwarded size={22} />
-                  <div className="outcome-btn-text">
-                    <span className="outcome-primary">Call Back Later</span>
-                    <span className="outcome-hint">Save for tomorrow or pick time</span>
-                  </div>
-                  <span className="key-shortcut-hint">Key B</span>
-                </button>
+                  {/* Connected */}
+                  <button
+                    type="button"
+                    onClick={() => handleRecordDisposition('Connected', { autoAdvance: true })}
+                    className="outcome-card-btn outcome-connected"
+                  >
+                    <PhoneCall size={20} />
+                    <div className="outcome-label-wrap">
+                      <span className="outcome-name">Connected</span>
+                      <span className="outcome-desc">Spoke, needs follow-up</span>
+                    </div>
+                  </button>
 
-                {/* 🟢 Interested */}
-                <button
-                  type="button"
-                  onClick={() => handleRecordDisposition('Interested', { autoAdvance: false })}
-                  className="outcome-btn btn-interested"
-                  title="Mark as Interested (Press I)"
-                >
-                  <ThumbsUp size={22} />
-                  <div className="outcome-btn-text">
-                    <span className="outcome-primary">Interested!</span>
-                    <span className="outcome-hint">Positive conversation / demo</span>
-                  </div>
-                  <span className="key-shortcut-hint">Key I</span>
-                </button>
+                  {/* Call Back Later */}
+                  <button
+                    type="button"
+                    onClick={() => setIsFollowUpOpen(!isFollowUpOpen)}
+                    className={`outcome-card-btn outcome-callback ${isFollowUpOpen ? 'active' : ''}`}
+                  >
+                    <PhoneForwarded size={20} />
+                    <div className="outcome-label-wrap">
+                      <span className="outcome-name">Callback / Later</span>
+                      <span className="outcome-desc">Pick date &amp; time</span>
+                    </div>
+                  </button>
 
-                {/* 🏆 Deal Won */}
-                <button
-                  type="button"
-                  onClick={() => setIsDealWonOpen(!isDealWonOpen)}
-                  className={`outcome-btn btn-deal-won ${isDealWonOpen ? 'is-active-drop' : ''}`}
-                  title="Mark as Deal Won & Record Value"
-                >
-                  <Trophy size={22} />
-                  <div className="outcome-btn-text">
-                    <span className="outcome-primary">Deal Won! 🏆</span>
-                    <span className="outcome-hint">Closed & payment agreed</span>
-                  </div>
-                  <span className="key-shortcut-hint">Won</span>
-                </button>
+                  {/* Not Picked Up / No Answer */}
+                  <button
+                    type="button"
+                    onClick={() => handleRecordDisposition('Not Picked Up', { autoAdvance: true })}
+                    className="outcome-card-btn outcome-not-picked"
+                  >
+                    <PhoneOff size={20} />
+                    <div className="outcome-label-wrap">
+                      <span className="outcome-name">No Answer / Busy</span>
+                      <span className="outcome-desc">Ringing or switched off</span>
+                    </div>
+                  </button>
 
-                {/* ⚪ Not Interested */}
-                <button
-                  type="button"
-                  onClick={() => handleRecordDisposition('Not Interested')}
-                  className="outcome-btn btn-not-interested"
-                  title="Mark as Not Interested (Press X)"
-                >
-                  <ThumbsDown size={22} />
-                  <div className="outcome-btn-text">
-                    <span className="outcome-primary">Not Interested</span>
-                    <span className="outcome-hint">No requirement / rejected</span>
-                  </div>
-                  <span className="key-shortcut-hint">Key X</span>
-                </button>
-              </div>
+                  {/* Not Interested */}
+                  <button
+                    type="button"
+                    onClick={() => handleRecordDisposition('Not Interested', { autoAdvance: true })}
+                    className="outcome-card-btn outcome-not-interested"
+                  >
+                    <ThumbsDown size={20} />
+                    <div className="outcome-label-wrap">
+                      <span className="outcome-name">Not Interested</span>
+                      <span className="outcome-desc">Rejected / no need</span>
+                    </div>
+                  </button>
 
-              {/* QUICK DEAL WON ACCORDION */}
-              {isDealWonOpen && (
-                <div className="deal-won-presets-panel">
-                  <div className="deal-won-header">
-                    <Trophy size={16} className="text-amber" />
-                    <span>🎉 Deal Won Amount (₹): (Select or enter custom amount)</span>
-                  </div>
+                  {/* Deal Won */}
+                  <button
+                    type="button"
+                    onClick={() => setIsDealWonOpen(!isDealWonOpen)}
+                    className={`outcome-card-btn outcome-won ${isDealWonOpen ? 'active' : ''}`}
+                  >
+                    <Trophy size={20} />
+                    <div className="outcome-label-wrap">
+                      <span className="outcome-name">Deal Won! 🏆</span>
+                      <span className="outcome-desc">Closed &amp; agreed</span>
+                    </div>
+                  </button>
+                </div>
 
-                  <div className="deal-amount-presets">
-                    {[15000, 25000, 50000, 100000].map((amt) => (
+                {/* ACCORDION: CALLBACK / FOLLOW-UP PRESETS */}
+                {isFollowUpOpen && (
+                  <div className="callback-presets-card">
+                    <span className="preset-card-title">Schedule Callback:</span>
+                    <div className="preset-buttons-row">
                       <button
-                        key={amt}
                         type="button"
+                        className="preset-btn"
                         onClick={() =>
-                          handleRecordDisposition('Deal Won', {
-                            dealValue: amt,
+                          handleRecordDisposition('Call Back Later', {
+                            followUpDate: todayStr,
+                            followUpTime: '16:00',
                           })
                         }
-                        className={`deal-preset-btn ${dealWonAmount === amt ? 'active' : ''}`}
                       >
-                        <span>{amt >= 100000 ? `₹${amt / 100000} Lakh` : `₹${amt / 1000}k`}</span>
-                        <small>₹{amt.toLocaleString('en-IN')}</small>
+                        Later Today (4 PM)
                       </button>
-                    ))}
-                  </div>
+                      <button
+                        type="button"
+                        className="preset-btn"
+                        onClick={() =>
+                          handleRecordDisposition('Call Back Later', {
+                            followUpDate: tomorrowStr,
+                            followUpTime: '11:00',
+                          })
+                        }
+                      >
+                        Tomorrow Morning (11 AM)
+                      </button>
+                      <button
+                        type="button"
+                        className="preset-btn"
+                        onClick={() =>
+                          handleRecordDisposition('Call Back Later', {
+                            followUpDate: tomorrowStr,
+                            followUpTime: '17:00',
+                          })
+                        }
+                      >
+                        Tomorrow Evening (5 PM)
+                      </button>
+                    </div>
 
-                  {/* Custom Deal Amount */}
-                  <div className="deal-custom-row">
-                    <label>Custom ₹:</label>
-                    <input
-                      type="number"
-                      placeholder="e.g. 35000"
-                      value={dealWonAmount || ''}
-                      onChange={(e) => setDealWonAmount(Number(e.target.value) || 0)}
-                      className="deal-custom-input"
-                    />
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleRecordDisposition('Deal Won', {
-                          dealValue: Number(dealWonAmount) || 0,
-                        })
-                      }
-                      className="btn-confirm-deal-won"
-                    >
-                      Confirm Deal 🏆 →
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* QUICK FOLLOW-UP ACCORDION (Tomorrow Presets) */}
-              {isFollowUpOpen && (
-                <div className="followup-presets-panel">
-                  <div className="followup-panel-header">
-                    <Calendar size={16} />
-                    <span>When should we call back? (1-click saves & advances)</span>
-                  </div>
-
-                  <div className="presets-row">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleRecordDisposition('Call Back Later', {
-                          followUpDate: tomorrowStr,
-                          followUpTime: '10:00 AM',
-                        })
-                      }
-                      className="preset-btn"
-                    >
-                      <span>☀️ Tomorrow Morning</span>
-                      <strong>10:00 AM</strong>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleRecordDisposition('Call Back Later', {
-                          followUpDate: tomorrowStr,
-                          followUpTime: '02:00 PM',
-                        })
-                      }
-                      className="preset-btn"
-                    >
-                      <span>🌤️ Tomorrow Afternoon</span>
-                      <strong>2:00 PM</strong>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleRecordDisposition('Call Back Later', {
-                          followUpDate: tomorrowStr,
-                          followUpTime: '05:00 PM',
-                        })
-                      }
-                      className="preset-btn"
-                    >
-                      <span>🌆 Tomorrow Evening</span>
-                      <strong>5:00 PM</strong>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleRecordDisposition('Call Back Later', {
-                          followUpDate: inTwoDaysStr,
-                          followUpTime: '11:00 AM',
-                        })
-                      }
-                      className="preset-btn"
-                    >
-                      <span>📅 In 2 Days</span>
-                      <strong>11:00 AM</strong>
-                    </button>
-                  </div>
-
-                  {/* Custom Follow-Up Date & Time */}
-                  <div className="custom-datetime-row">
-                    <div className="custom-date-field">
-                      <label>Custom Date:</label>
+                    <div className="custom-datetime-row">
                       <input
                         type="date"
                         value={customFollowUpDate || tomorrowStr}
                         onChange={(e) => setCustomFollowUpDate(e.target.value)}
                         className="date-input-sm"
                       />
-                    </div>
-                    <div className="custom-time-field">
-                      <label>Time:</label>
                       <input
                         type="time"
                         value={customFollowUpTime}
                         onChange={(e) => setCustomFollowUpTime(e.target.value)}
-                        className="date-input-sm"
+                        className="time-input-sm"
                       />
+                      <button
+                        type="button"
+                        className="btn-confirm-callback"
+                        onClick={() =>
+                          handleRecordDisposition('Call Back Later', {
+                            followUpDate: customFollowUpDate || tomorrowStr,
+                            followUpTime: customFollowUpTime,
+                          })
+                        }
+                      >
+                        Confirm Callback
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleRecordDisposition('Call Back Later', {
-                          followUpDate: customFollowUpDate || tomorrowStr,
-                          followUpTime: customFollowUpTime,
-                        })
-                      }
-                      className="btn-save-custom-followup"
-                    >
-                      Save & Next →
-                    </button>
                   </div>
-                </div>
-              )}
-            </div>
+                )}
 
-            {/* SECTION 2: BROCHURE & WHATSAPP */}
-            <div className="panel-box brochure-box">
-              <div className="panel-title-row">
-                <div className="brochure-heading-left">
-                  <h3 className="panel-title">2. Company Brochure</h3>
+                {/* ACCORDION: DEAL WON AMOUNT */}
+                {isDealWonOpen && (
+                  <div className="deal-won-presets-card">
+                    <span className="preset-card-title">Select Closed Deal Value (₹):</span>
+                    <div className="preset-buttons-row">
+                      {[15000, 25000, 50000, 100000].map((amt) => (
+                        <button
+                          key={amt}
+                          type="button"
+                          className={`preset-btn ${dealWonAmount === amt ? 'active' : ''}`}
+                          onClick={() =>
+                            handleRecordDisposition('Deal Won', {
+                              dealValue: amt,
+                            })
+                          }
+                        >
+                          ₹{amt.toLocaleString('en-IN')}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="custom-deal-row">
+                      <input
+                        type="number"
+                        placeholder="Custom ₹ amount"
+                        value={dealWonAmount || ''}
+                        onChange={(e) => setDealWonAmount(Number(e.target.value) || 0)}
+                        className="deal-input-sm"
+                      />
+                      <button
+                        type="button"
+                        className="btn-confirm-deal"
+                        onClick={() =>
+                          handleRecordDisposition('Deal Won', {
+                            dealValue: dealWonAmount || 25000,
+                          })
+                        }
+                      >
+                        Confirm Deal Won
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* PRIMARY CTA: SAVE & NEXT CONTACT */}
+                <div className="save-response-footer">
                   <button
-                    onClick={() => {
-                      setEditBrochureUrl(brochureConfig.brochureUrl);
-                      setIsEditingBrochure(!isEditingBrochure);
-                    }}
-                    className="btn-edit-brochure-link"
-                    title="Change brochure URL or PDF link"
+                    type="button"
+                    onClick={() =>
+                      handleRecordDisposition(selectedDisposition || 'Connected', {
+                        autoAdvance: true,
+                      })
+                    }
+                    className="btn-save-and-advance"
                   >
-                    <Settings size={13} />
-                    <span>Change Link</span>
+                    <span>Save Response &amp; Next Contact</span>
+                    <ArrowRight size={17} />
                   </button>
                 </div>
-
-                {/* Status Badge */}
-                {currentLead.brochureSent ? (
-                  <span className="brochure-status-badge sent">
-                    <CheckCircle2 size={13} />
-                    <span>Sent on {currentLead.brochureSentDate || 'Today'}</span>
-                  </span>
-                ) : (
-                  <span className="brochure-status-badge not-sent">
-                    Brochure Not Sent
-                  </span>
-                )}
               </div>
-
-              {/* Edit brochure link inline */}
-              {isEditingBrochure && (
-                <div className="edit-brochure-drawer">
-                  <label>Brochure URL (PDF, Google Drive, or Website):</label>
-                  <div className="brochure-url-input-row">
-                    <input
-                      type="url"
-                      value={editBrochureUrl}
-                      onChange={(e) => setEditBrochureUrl(e.target.value)}
-                      placeholder="https://drive.google.com/your-brochure.pdf"
-                      className="brochure-input"
-                    />
-                    <button
-                      onClick={handleSaveBrochureConfig}
-                      className="btn-save-url"
-                    >
-                      Save
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Brochure Action Buttons */}
-              <div className="brochure-action-row">
-                <button
-                  type="button"
-                  onClick={handleSendBrochureWhatsApp}
-                  className="btn-send-brochure-wa"
-                  title="Opens WhatsApp directly with pre-filled message + brochure link"
-                >
-                  <Send size={16} />
-                  <span>Send Brochure on WhatsApp</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleToggleBrochureSent}
-                  className={`btn-toggle-brochure ${currentLead.brochureSent ? 'is-marked' : ''}`}
-                >
-                  <Check size={16} />
-                  <span>
-                    {currentLead.brochureSent ? 'Marked Sent' : 'Mark as Sent'}
-                  </span>
-                </button>
-              </div>
-            </div>
-
-            {/* Quick Helper / Keyboard Navigation */}
-            <div className="keyboard-shortcuts-pill">
-              <span className="keys-label">Shortcuts:</span>
-              <span className="key-tag">N: Not Picked Up</span>
-              <span className="key-tag">B: Call Back</span>
-              <span className="key-tag">I: Interested</span>
-              <span className="key-tag">W: WhatsApp Brochure</span>
-              <span className="key-tag">→: Skip / Next</span>
             </div>
           </div>
         </div>
       ) : null}
 
-      {/* Quick WhatsApp Templates Modal */}
+      {/* QUICK WHATSAPP MODAL IF NEEDED */}
       {isWAModalOpen && currentLead && (
         <QuickWhatsAppModal
           lead={currentLead}
           onClose={() => setIsWAModalOpen(false)}
-          onSent={() => showToast('📲 WhatsApp opened!')}
+          onSent={() => {
+            onSaveCallLog(currentLead.id, {
+              repName: activeRep,
+              result: 'Connected',
+              notes: 'Sent WhatsApp brochure',
+              askedForWhatsApp: true,
+              brochureSent: true,
+            });
+            setIsWAModalOpen(false);
+          }}
         />
       )}
 
       <style jsx>{`
-        .dialer-wrapper {
+        .telecaller-workspace {
+          max-width: 1400px;
+          margin: 0 auto;
+          padding: 1rem 1.25rem 3rem 1.25rem;
           display: flex;
           flex-direction: column;
-          gap: 1.25rem;
-          width: 100%;
-          max-width: 1200px;
-          margin: 0 auto;
+          gap: 1rem;
+          color: #0b1d33;
         }
 
-        /* Toast notification */
-        .dialer-toast {
+        .telecaller-toast {
           position: fixed;
-          top: 1.5rem;
+          bottom: 2rem;
           right: 2rem;
-          background: #0b1d33;
+          background: #0f172a;
           color: #ffffff;
-          padding: 0.75rem 1.25rem;
+          padding: 0.85rem 1.35rem;
           border-radius: 10px;
           font-size: 0.9rem;
           font-weight: 600;
-          box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
-          z-index: 99999;
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-          animation: slideDown 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+          z-index: 9999;
+          animation: slideUp 0.25s ease-out;
         }
-        @keyframes slideDown {
+        @keyframes slideUp {
           from {
+            transform: translateY(12px);
             opacity: 0;
-            transform: translateY(-10px);
           }
           to {
-            opacity: 1;
             transform: translateY(0);
+            opacity: 1;
           }
         }
 
-        /* Top Bar */
-        .dialer-top-bar {
+        /* 1. TOP NAV */
+        .telecaller-top-nav {
           display: flex;
           align-items: center;
           justify-content: space-between;
           background: #ffffff;
-          padding: 0.85rem 1.25rem;
-          border-radius: 14px;
           border: 1px solid #e2e8f0;
-          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-        }
-        .queue-filter-group {
-          display: flex;
-          align-items: center;
-          gap: 0.75rem;
-          overflow-x: auto;
-        }
-        .queue-label {
-          display: flex;
-          align-items: center;
-          gap: 0.4rem;
-          font-size: 0.82rem;
-          font-weight: 700;
-          color: #475569;
-          text-transform: uppercase;
-          letter-spacing: 0.04em;
-          white-space: nowrap;
-        }
-        .queue-pills {
-          display: flex;
-          gap: 0.4rem;
-          overflow-x: auto;
-          -webkit-overflow-scrolling: touch;
-          scrollbar-width: none;
-          padding-bottom: 2px;
-        }
-        .queue-pills::-webkit-scrollbar {
-          display: none;
-        }
-        .queue-pill {
-          padding: 0.4rem 0.85rem;
-          border-radius: 9999px;
-          border: 1px solid #cbd5e1;
-          background: #ffffff;
-          font-size: 0.82rem;
-          font-weight: 500;
-          color: #475569;
-          cursor: pointer;
-          white-space: nowrap;
-          flex-shrink: 0;
-          transition: all 0.15s;
-        }
-        .queue-pill:hover {
-          background: #f8fafc;
-          border-color: #94a3b8;
-        }
-        .queue-pill.active {
-          background: #1e50bc;
-          color: #ffffff;
-          border-color: #1e50bc;
-          font-weight: 600;
-        }
-        .queue-pill.pill-alert {
-          border-color: #fca5a5;
-          color: #dc2626;
-          background: #fef2f2;
-        }
-        .queue-pill.pill-alert.active {
-          background: #dc2626;
-          color: #ffffff;
-          border-color: #dc2626;
-        }
-        .queue-pill.pill-won {
-          border-color: #fde68a;
-          color: #b45309;
-          background: #fffbeb;
-        }
-        .queue-pill.pill-won.active {
-          background: #d97706;
-          color: #ffffff;
-          border-color: #d97706;
-        }
-        .dialer-call-counter {
-          display: flex;
-          align-items: center;
-          gap: 0.4rem;
-          background: #f0fdf4;
-          border: 1px solid #bbf7d0;
-          color: #15803d;
-          padding: 0.4rem 0.8rem;
-          border-radius: 9999px;
-          font-size: 0.82rem;
-          font-weight: 700;
-          white-space: nowrap;
-        }
-        .top-right-controls {
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-        }
-        .btn-upload-more {
-          background: #eff6ff;
-          border: 1px solid #bfdbfe;
-          color: #1e50bc;
-          padding: 0.45rem 0.9rem;
-          border-radius: 8px;
-          font-size: 0.82rem;
-          font-weight: 600;
-          cursor: pointer;
-        }
-        .btn-upload-more:hover {
-          background: #dbeafe;
-        }
-        .btn-exit {
-          display: flex;
-          align-items: center;
-          gap: 0.35rem;
-          background: #f8fafc;
-          border: 1px solid #cbd5e1;
-          color: #475569;
-          padding: 0.45rem 0.85rem;
-          border-radius: 8px;
-          font-size: 0.82rem;
-          cursor: pointer;
-        }
-        .btn-exit:hover {
-          background: #f1f5f9;
-        }
-
-        /* Progress Bar */
-        .dialer-progress-bar-container {
-          background: #ffffff;
-          padding: 0.85rem 1.25rem;
           border-radius: 12px;
-          border: 1px solid #e2e8f0;
-          display: flex;
-          flex-direction: column;
-          gap: 0.6rem;
-        }
-        .progress-info-row {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-        }
-        .progress-text {
-          font-size: 0.92rem;
-          color: #334155;
-        }
-        .nav-btn-group {
-          display: flex;
-          gap: 0.5rem;
-        }
-        .nav-btn {
-          display: flex;
-          align-items: center;
-          gap: 0.4rem;
-          padding: 0.4rem 0.85rem;
-          border-radius: 8px;
-          border: 1px solid #cbd5e1;
-          background: #ffffff;
-          font-size: 0.82rem;
-          font-weight: 600;
-          color: #334155;
-          cursor: pointer;
-          transition: all 0.15s;
-        }
-        .nav-btn:hover:not(:disabled) {
-          background: #f8fafc;
-          border-color: #94a3b8;
-        }
-        .nav-btn:disabled {
-          opacity: 0.4;
-          cursor: not-allowed;
-        }
-        .progress-track {
-          width: 100%;
-          height: 6px;
-          background: #f1f5f9;
-          border-radius: 9999px;
-          overflow: hidden;
-        }
-        .progress-fill {
-          height: 100%;
-          background: linear-gradient(90deg, #1e50bc, #3b82f6);
-          border-radius: 9999px;
-          transition: width 0.3s ease;
-        }
-
-        /* Empty state */
-        .empty-queue-card {
-          background: #ffffff;
-          border-radius: 16px;
-          border: 1px dashed #cbd5e1;
-          padding: 4rem 2rem;
-          text-align: center;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
+          padding: 0.65rem 1rem;
           gap: 1rem;
+          flex-wrap: wrap;
         }
-        .empty-icon {
-          color: #16a34a;
-        }
-        .empty-queue-card h3 {
-          font-size: 1.35rem;
-          color: #0b1d33;
-          font-weight: 700;
-        }
-        .empty-queue-card p {
-          color: #64748b;
-          max-width: 480px;
-          font-size: 0.95rem;
-          line-height: 1.5;
-        }
-        .empty-actions {
-          display: flex;
-          gap: 1rem;
-          margin-top: 0.5rem;
-        }
-        .btn-switch-all {
-          padding: 0.65rem 1.25rem;
-          border-radius: 9px;
-          border: 1px solid #cbd5e1;
-          background: #ffffff;
-          font-weight: 600;
-          color: #1e293b;
-          cursor: pointer;
-        }
-        .btn-upload-primary {
-          padding: 0.65rem 1.25rem;
-          border-radius: 9px;
-          border: none;
-          background: #1e50bc;
-          color: #ffffff;
-          font-weight: 600;
-          cursor: pointer;
-        }
-
-        /* Content Grid */
-        .dialer-content-grid {
-          display: grid;
-          grid-template-columns: 1.15fr 1fr;
-          gap: 1.25rem;
-        }
-
-        /* Left Column: Client Main Card */
-        .client-main-card {
-          background: #ffffff;
-          border-radius: 16px;
-          border: 1px solid #e2e8f0;
-          padding: 1.75rem;
-          display: flex;
-          flex-direction: column;
-          gap: 1.25rem;
-          box-shadow: 0 4px 12px rgba(11, 29, 51, 0.04);
-        }
-        .client-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: flex-start;
-          gap: 1rem;
-        }
-        .lead-seq-badge {
-          font-size: 0.72rem;
-          font-weight: 700;
-          text-transform: uppercase;
-          background: #eff6ff;
-          color: #1e50bc;
-          padding: 0.2rem 0.55rem;
-          border-radius: 4px;
-          letter-spacing: 0.05em;
-          display: inline-block;
-          margin-bottom: 0.35rem;
-        }
-        .client-business-name {
-          font-size: 1.6rem;
-          font-weight: 800;
-          color: #0b1d33;
-          line-height: 1.2;
-        }
-        .client-owner-name {
-          display: flex;
-          align-items: center;
-          gap: 0.4rem;
-          color: #475569;
-          font-size: 0.95rem;
-          font-weight: 500;
-          margin-top: 0.35rem;
-        }
-        .call-timer-box {
-          display: flex;
-          align-items: center;
-          gap: 0.4rem;
-          background: #f8fafc;
-          border: 1px solid #e2e8f0;
-          padding: 0.4rem 0.65rem;
-          border-radius: 10px;
-        }
-        .timer-display {
-          display: flex;
-          align-items: center;
-          gap: 0.35rem;
-          font-family: var(--font-mono, monospace);
-          font-size: 0.95rem;
-          font-weight: 700;
-          color: #0b1d33;
-        }
-        .timer-icon {
-          color: #3b82f6;
-        }
-        .timer-pause-btn {
-          background: transparent;
-          border: none;
-          color: #64748b;
-          cursor: pointer;
-          padding: 2px;
-          display: flex;
-          align-items: center;
-        }
-        .timer-pause-btn:hover {
-          color: #0b1d33;
-        }
-
-        /* Phone Call Banner */
-        .phone-call-banner {
-          background: #f8fafc;
-          border: 1.5px solid #e2e8f0;
-          border-radius: 14px;
-          padding: 1.25rem;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 1rem;
-        }
-        .phone-number-group {
-          display: flex;
-          flex-direction: column;
-          gap: 0.2rem;
-        }
-        .phone-label {
-          font-size: 0.7rem;
-          font-weight: 700;
-          color: #64748b;
-          letter-spacing: 0.06em;
-        }
-        .phone-val-row {
+        .nav-left-group {
           display: flex;
           align-items: center;
           gap: 0.75rem;
-        }
-        .phone-display {
-          font-family: var(--font-mono, monospace);
-          font-size: 1.5rem;
-          font-weight: 800;
-          color: #0b1d33;
-          letter-spacing: -0.02em;
-        }
-        .btn-copy-phone {
-          display: flex;
-          align-items: center;
-          gap: 0.35rem;
-          background: #ffffff;
-          border: 1px solid #cbd5e1;
-          padding: 0.25rem 0.55rem;
-          border-radius: 6px;
-          font-size: 0.78rem;
-          color: #475569;
-          cursor: pointer;
-        }
-        .btn-copy-phone:hover {
-          background: #f1f5f9;
-        }
-        .call-buttons-row {
-          display: flex;
-          align-items: center;
-          gap: 0.65rem;
-        }
-        .btn-dial-primary {
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-          background: #16a34a;
-          color: #ffffff;
-          padding: 0.75rem 1.35rem;
-          border-radius: 10px;
-          font-weight: 700;
-          font-size: 1rem;
-          text-decoration: none;
-          box-shadow: 0 4px 12px rgba(22, 163, 74, 0.28);
-          transition: all 0.15s;
-        }
-        .btn-dial-primary:hover {
-          background: #15803d;
-          transform: translateY(-1px);
-        }
-        .btn-wa-direct {
-          display: flex;
-          align-items: center;
-          gap: 0.45rem;
-          background: #25d366;
-          color: #ffffff;
-          padding: 0.75rem 1.15rem;
-          border-radius: 10px;
-          font-weight: 700;
-          font-size: 0.95rem;
-          text-decoration: none;
-          transition: all 0.15s;
-        }
-        .btn-wa-direct:hover {
-          background: #128c7e;
-          transform: translateY(-1px);
-        }
-
-        /* Meta Chips */
-        .client-meta-chips {
-          display: flex;
           flex-wrap: wrap;
-          gap: 0.5rem;
         }
-        .meta-chip {
+        .btn-back-to-hub {
+          display: flex;
+          align-items: center;
+          gap: 0.4rem;
+          padding: 0.4rem 0.75rem;
+          border-radius: 8px;
+          border: 1px solid #cbd5e1;
+          background: #f8fafc;
+          font-size: 0.82rem;
+          font-weight: 700;
+          color: #334155;
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+        .btn-back-to-hub:hover {
+          background: #f1f5f9;
+          border-color: #94a3b8;
+        }
+        .breadcrumb-pill {
           display: flex;
           align-items: center;
           gap: 0.4rem;
@@ -1578,834 +1266,922 @@ export default function SimplePowerDialer({
           padding: 0.35rem 0.75rem;
           border-radius: 8px;
           font-size: 0.82rem;
-          font-weight: 500;
-          color: #334155;
         }
-        .chip-status-interested {
-          background: #dcfce7;
-          color: #166534;
+        .crumb-cat {
+          font-weight: 700;
+          color: #1e50bc;
+        }
+        .crumb-sheet {
           font-weight: 600;
-        }
-        .chip-status-called {
-          background: #e0e7ff;
-          color: #3730a3;
-        }
-        .chip-status-new {
-          background: #f1f5f9;
           color: #475569;
         }
-
-        /* Requirement Box */
-        .requirement-box {
-          background: #eff6ff;
-          border: 1px solid #bfdbfe;
-          border-radius: 12px;
-          padding: 1rem 1.15rem;
-          display: flex;
-          flex-direction: column;
-          gap: 0.35rem;
-        }
-        .requirement-title {
+        .queue-quick-toggle {
           display: flex;
           align-items: center;
-          gap: 0.4rem;
-          font-size: 0.8rem;
-          font-weight: 700;
-          color: #1e40af;
-          text-transform: uppercase;
-          letter-spacing: 0.04em;
-        }
-        .requirement-textarea {
-          width: 100%;
-          border: 1.5px solid #bfdbfe;
-          border-radius: 8px;
-          padding: 0.6rem 0.75rem;
-          font-size: 0.9rem;
-          color: #1e3a8a;
-          background: #ffffff;
-          outline: none;
-          resize: vertical;
-          font-family: inherit;
-        }
-        .requirement-textarea:focus {
-          border-color: #2563eb;
-          box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
-        }
-
-
-        /* Notes input */
-        .notes-entry-box {
-          display: flex;
-          flex-direction: column;
-          gap: 0.4rem;
-        }
-        .notes-label {
-          font-size: 0.82rem;
-          font-weight: 600;
-          color: #334155;
-          display: flex;
-          align-items: center;
-          gap: 0.35rem;
-        }
-        .dialer-textarea {
-          width: 100%;
-          border: 1.5px solid #cbd5e1;
-          border-radius: 10px;
-          padding: 0.65rem 0.85rem;
-          font-size: 0.88rem;
-          outline: none;
-          background: #f8fafc;
-          resize: vertical;
-        }
-        .dialer-textarea:focus {
-          border-color: #2563eb;
-          background: #ffffff;
-        }
-
-        /* Past calls timeline */
-        .past-calls-box {
+          gap: 0.25rem;
           background: #f8fafc;
           border: 1px solid #e2e8f0;
-          border-radius: 10px;
-          padding: 0.65rem 0.85rem;
-          display: flex;
-          flex-direction: column;
-          gap: 0.5rem;
+          border-radius: 8px;
+          padding: 2px;
         }
-        .past-calls-title {
+        .queue-sub-btn {
+          border: none;
+          background: transparent;
+          padding: 0.35rem 0.65rem;
+          border-radius: 6px;
+          font-size: 0.78rem;
+          font-weight: 600;
+          color: #64748b;
+          cursor: pointer;
+        }
+        .queue-sub-btn.active {
+          background: #ffffff;
+          color: #0b1d33;
+          font-weight: 700;
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+        }
+        .nav-center-progress {
+          display: flex;
+          align-items: center;
+          gap: 0.85rem;
+        }
+        .lead-counter-text {
+          font-size: 0.82rem;
+          color: #64748b;
+        }
+        .lead-nav-buttons {
+          display: flex;
+          align-items: center;
+          gap: 0.35rem;
+        }
+        .btn-nav-step {
+          display: flex;
+          align-items: center;
+          gap: 0.35rem;
+          padding: 0.38rem 0.75rem;
+          border-radius: 6px;
+          border: 1px solid #cbd5e1;
+          background: #ffffff;
           font-size: 0.78rem;
           font-weight: 700;
-          color: #475569;
-          display: flex;
-          align-items: center;
-          gap: 0.35rem;
+          color: #334155;
+          cursor: pointer;
         }
-        .past-calls-list {
-          display: flex;
-          flex-direction: column;
-          gap: 0.45rem;
+        .btn-nav-step:hover:not(:disabled) {
+          background: #f1f5f9;
         }
-        .past-call-item {
+        .btn-nav-step:disabled {
+          opacity: 0.45;
+          cursor: not-allowed;
+        }
+
+        /* 2. TIMERS & TARGET BAR */
+        .timers-and-target-strip {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 0.85rem;
+        }
+        @media (max-width: 900px) {
+          .timers-and-target-strip {
+            grid-template-columns: repeat(2, 1fr);
+          }
+        }
+        .timer-badge-box {
           background: #ffffff;
           border: 1px solid #e2e8f0;
-          border-radius: 8px;
-          padding: 0.5rem 0.65rem;
+          border-radius: 12px;
+          padding: 0.75rem 1rem;
           display: flex;
           flex-direction: column;
           gap: 0.25rem;
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
         }
-        .past-call-top {
+        .active-call-timer {
+          background: #eff6ff;
+          border-color: #bfdbfe;
+        }
+        .timer-box-label {
+          display: flex;
+          align-items: center;
+          gap: 0.35rem;
+          font-size: 0.72rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          color: #64748b;
+        }
+        .timer-clock-digits {
+          display: flex;
+          align-items: center;
+          gap: 0.45rem;
+          font-size: 1.4rem;
+          font-weight: 800;
+          color: #1e50bc;
+          font-family: var(--font-mono, monospace);
+        }
+        .stat-digits {
+          font-size: 1.3rem;
+          font-weight: 800;
+          color: #0b1d33;
+        }
+        .micro-subtext {
+          font-size: 0.72rem;
+          color: #64748b;
+        }
+        .timer-micro-actions {
+          display: flex;
+          align-items: center;
+          gap: 0.35rem;
+          margin-top: 0.15rem;
+        }
+        .btn-mini-timer {
+          width: 22px;
+          height: 22px;
+          border-radius: 4px;
+          border: 1px solid #bfdbfe;
+          background: #ffffff;
+          color: #1e50bc;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+        }
+        .btn-mini-timer:hover {
+          background: #dbeafe;
+        }
+
+        .target-summary-box {
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+        .target-summary-box:hover {
+          border-color: #cbd5e1;
+          background: #f8fafc;
+        }
+        .target-box-header {
           display: flex;
           align-items: center;
           justify-content: space-between;
         }
-        .log-outcome-badge {
-          font-size: 0.7rem;
+        .btn-edit-target {
+          display: flex;
+          align-items: center;
+          gap: 0.25rem;
+          border: none;
+          background: transparent;
+          color: #1e50bc;
+          font-size: 0.72rem;
           font-weight: 700;
-          padding: 0.15rem 0.45rem;
-          border-radius: 9999px;
+          cursor: pointer;
         }
-        .badge-interested {
+        .target-dual-progress {
+          display: flex;
+          flex-direction: column;
+          gap: 0.3rem;
+          margin-top: 0.2rem;
+        }
+        .target-progress-bar-track {
+          height: 6px;
+          background: #e2e8f0;
+          border-radius: 999px;
+          overflow: hidden;
+        }
+        .target-progress-bar-fill {
+          height: 100%;
+          background: linear-gradient(90deg, #3b82f6, #10b981);
+          border-radius: 999px;
+        }
+        .target-dual-labels {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          font-size: 0.73rem;
+          color: #64748b;
+        }
+
+        .sheet-progress-strip {
+          height: 4px;
+          background: #e2e8f0;
+          border-radius: 999px;
+          overflow: hidden;
+        }
+        .sheet-progress-fill {
+          height: 100%;
+          background: #3b82f6;
+          transition: width 0.3s ease;
+        }
+
+        /* 3. CONTACT BANNER */
+        .client-contact-banner {
+          background: #ffffff;
+          border: 1px solid #e2e8f0;
+          border-radius: 14px;
+          padding: 1.15rem 1.35rem;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 1rem;
+          box-shadow: 0 1px 4px rgba(0, 0, 0, 0.02);
+          flex-wrap: wrap;
+        }
+        .contact-title-row {
+          display: flex;
+          align-items: center;
+          gap: 0.65rem;
+          flex-wrap: wrap;
+        }
+        .contact-seq-pill {
+          font-size: 0.72rem;
+          font-weight: 800;
+          background: #f1f5f9;
+          color: #64748b;
+          padding: 0.15rem 0.5rem;
+          border-radius: 6px;
+        }
+        .contact-business-name {
+          font-size: 1.3rem;
+          font-weight: 800;
+          color: #0b1d33;
+          margin: 0;
+          letter-spacing: -0.01em;
+        }
+        .status-pill {
+          font-size: 0.72rem;
+          font-weight: 700;
+          padding: 0.15rem 0.55rem;
+          border-radius: 6px;
+          background: #f1f5f9;
+          color: #475569;
+        }
+        .status-new {
+          background: #eff6ff;
+          color: #1e50bc;
+        }
+        .status-interested {
           background: #dcfce7;
           color: #15803d;
         }
-        .badge-deal-won {
+        .status-won {
           background: #fef3c7;
           color: #b45309;
         }
-        .badge-call-back-later,
-        .badge-callback {
-          background: #fef9c3;
-          color: #854d0e;
+        .contact-meta-row {
+          display: flex;
+          align-items: center;
+          gap: 0.85rem;
+          margin-top: 0.35rem;
+          font-size: 0.82rem;
+          color: #64748b;
+          flex-wrap: wrap;
         }
-        .badge-not-picked-up,
-        .badge-no-answer {
-          background: #fee2e2;
-          color: #b91c1c;
+        .meta-item {
+          display: flex;
+          align-items: center;
+          gap: 0.35rem;
         }
-        .badge-not-interested {
-          background: #f1f5f9;
+        .contact-action-buttons {
+          display: flex;
+          align-items: center;
+          gap: 0.65rem;
+          flex-wrap: wrap;
+        }
+        .phone-number-pill {
+          display: flex;
+          align-items: center;
+          gap: 0.4rem;
+          background: #f8fafc;
+          border: 1px solid #cbd5e1;
+          padding: 0.45rem 0.85rem;
+          border-radius: 9px;
+          font-weight: 700;
+          font-size: 0.92rem;
+          color: #0b1d33;
+        }
+        .btn-copy-num {
+          border: none;
+          background: transparent;
+          color: #64748b;
+          cursor: pointer;
+        }
+        .btn-action-call {
+          display: flex;
+          align-items: center;
+          gap: 0.45rem;
+          background: #1e50bc;
+          color: #ffffff;
+          padding: 0.55rem 1.15rem;
+          border-radius: 9px;
+          font-size: 0.88rem;
+          font-weight: 700;
+          text-decoration: none;
+          box-shadow: 0 2px 6px rgba(30, 80, 188, 0.25);
+          transition: all 0.15s ease;
+        }
+        .btn-action-call:hover {
+          background: #18429c;
+          transform: translateY(-1px);
+        }
+        .btn-action-whatsapp {
+          display: flex;
+          align-items: center;
+          gap: 0.45rem;
+          background: #25d366;
+          color: #ffffff;
+          padding: 0.55rem 1.15rem;
+          border-radius: 9px;
+          font-size: 0.88rem;
+          font-weight: 700;
+          text-decoration: none;
+          box-shadow: 0 2px 6px rgba(37, 211, 102, 0.25);
+          transition: all 0.15s ease;
+        }
+        .btn-action-whatsapp:hover {
+          background: #1ebd59;
+          transform: translateY(-1px);
+        }
+
+        /* ========================================================= */
+        /* THE THREE PILLARS GRID                                    */
+        /* ========================================================= */
+        .three-pillars-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr 1fr;
+          gap: 1.15rem;
+          align-items: stretch;
+        }
+        @media (max-width: 1050px) {
+          .three-pillars-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+        .pillar-card {
+          background: #ffffff;
+          border: 1px solid #e2e8f0;
+          border-radius: 16px;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+        }
+        .pillar-header {
+          padding: 0.95rem 1.15rem;
+          background: #f8fafc;
+          border-bottom: 1px solid #e2e8f0;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 0.5rem;
+        }
+        .pillar-header-left {
+          display: flex;
+          align-items: center;
+          gap: 0.65rem;
+        }
+        .pillar-icon-badge {
+          width: 32px;
+          height: 32px;
+          border-radius: 8px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .badge-response {
+          background: #eff6ff;
+          color: #1e50bc;
+        }
+        .badge-notes {
+          background: #fef3c7;
+          color: #b45309;
+        }
+        .badge-script {
+          background: #ede9fe;
+          color: #6d28d9;
+        }
+        .pillar-title {
+          font-size: 0.95rem;
+          font-weight: 800;
+          color: #0b1d33;
+          margin: 0;
+        }
+        .pillar-subtitle {
+          font-size: 0.72rem;
           color: #64748b;
         }
-        .past-call-date {
-          font-size: 0.7rem;
-          color: #94a3b8;
+        .pillar-content {
+          padding: 1.15rem;
+          display: flex;
+          flex-direction: column;
+          gap: 0.95rem;
+          flex: 1;
         }
-        .past-call-notes {
-          font-size: 0.8rem;
-          color: #334155;
+
+        /* PILLAR 1: SCRIPT */
+        .script-tab-pills {
+          display: flex;
+          align-items: center;
+          gap: 0.25rem;
+          background: #ffffff;
+          border: 1px solid #e2e8f0;
+          border-radius: 6px;
+          padding: 2px;
+        }
+        .script-pill {
+          border: none;
+          background: transparent;
+          padding: 0.25rem 0.55rem;
+          font-size: 0.72rem;
+          font-weight: 700;
+          color: #64748b;
+          border-radius: 4px;
+          cursor: pointer;
+        }
+        .script-pill.active {
+          background: #1e50bc;
+          color: #ffffff;
+        }
+        .script-scrollable-content {
+          max-height: 480px;
+          overflow-y: auto;
+        }
+        .script-quote-box {
+          background: #f5f3ff;
+          border-left: 4px solid #7c3aed;
+          padding: 0.95rem;
+          border-radius: 0 10px 10px 0;
+        }
+        .opening-script-text {
+          font-size: 0.88rem;
+          line-height: 1.55;
+          color: #3b0764;
           margin: 0;
           font-style: italic;
         }
-        .past-call-followup {
-          font-size: 0.72rem;
-          color: #0369a1;
-          font-weight: 500;
+        .stages-header-label {
+          font-size: 0.75rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          color: #64748b;
+          display: block;
+          margin-bottom: 0.45rem;
         }
-
-        /* Right Column: Actions side panel */
-        .actions-side-panel {
+        .pitch-stages-list {
           display: flex;
           flex-direction: column;
-          gap: 1.25rem;
+          gap: 0.5rem;
+          margin-top: 0.5rem;
         }
-        .panel-box {
-          background: #ffffff;
-          border-radius: 16px;
-          border: 1px solid #e2e8f0;
-          padding: 1.5rem;
-          box-shadow: 0 4px 12px rgba(11, 29, 51, 0.04);
-        }
-        .panel-title-row {
+        .stage-item {
           display: flex;
-          justify-content: space-between;
-          align-items: baseline;
-          margin-bottom: 1.15rem;
+          align-items: flex-start;
+          gap: 0.55rem;
+          background: #f8fafc;
+          padding: 0.55rem 0.75rem;
+          border-radius: 8px;
+          border: 1px solid #f1f5f9;
         }
-        .panel-title {
-          font-size: 1.1rem;
+        .stage-index-pill {
+          width: 20px;
+          height: 20px;
+          border-radius: 999px;
+          background: #e2e8f0;
+          color: #334155;
+          font-size: 0.7rem;
+          font-weight: 800;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+        }
+        .stage-text {
+          display: flex;
+          flex-direction: column;
+          gap: 0.15rem;
+        }
+        .stage-name {
+          font-size: 0.82rem;
           font-weight: 700;
           color: #0b1d33;
         }
-        .panel-subtitle {
-          font-size: 0.78rem;
+        .stage-desc {
+          font-size: 0.75rem;
           color: #64748b;
         }
-
-        /* Disposition buttons grid */
-        .outcome-buttons-grid {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 0.85rem;
-        }
-        .outcome-btn {
+        .objection-selector-chips {
           display: flex;
           align-items: center;
-          gap: 0.75rem;
-          padding: 1rem 0.85rem;
-          border-radius: 12px;
-          border: 2px solid transparent;
+          gap: 0.35rem;
+          flex-wrap: wrap;
+          margin-bottom: 0.75rem;
+        }
+        .objection-chip {
+          padding: 0.3rem 0.6rem;
+          border-radius: 6px;
+          border: 1px solid #cbd5e1;
+          background: #ffffff;
+          font-size: 0.75rem;
+          font-weight: 600;
+          color: #334155;
           cursor: pointer;
+        }
+        .objection-chip.active {
+          background: #7c3aed;
+          color: #ffffff;
+          border-color: #7c3aed;
+        }
+        .objection-reply-card {
+          background: #fffbeb;
+          border: 1px solid #fde68a;
+          border-radius: 10px;
+          padding: 0.95rem;
+          display: flex;
+          flex-direction: column;
+          gap: 0.55rem;
+        }
+        .obj-question {
+          display: flex;
+          align-items: center;
+          gap: 0.45rem;
+          font-size: 0.84rem;
+          font-weight: 700;
+          color: #92400e;
+        }
+        .obj-reply {
+          display: flex;
+          flex-direction: column;
+          gap: 0.2rem;
+        }
+        .reply-label {
+          font-size: 0.72rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          color: #b45309;
+        }
+        .obj-reply p {
+          font-size: 0.85rem;
+          line-height: 1.5;
+          color: #451a03;
+          margin: 0;
+        }
+        .questions-list {
+          display: flex;
+          flex-direction: column;
+          gap: 0.55rem;
+        }
+        .question-bubble {
+          display: flex;
+          align-items: flex-start;
+          gap: 0.55rem;
+          background: #eff6ff;
+          border: 1px solid #bfdbfe;
+          padding: 0.65rem 0.85rem;
+          border-radius: 8px;
+        }
+        .question-bubble p {
+          font-size: 0.82rem;
+          color: #1e3a8a;
+          margin: 0;
+          line-height: 1.45;
+          font-weight: 600;
+        }
+
+        /* PILLAR 2: NOTES */
+        .notes-content-layout {
+          display: flex;
+          flex-direction: column;
+          gap: 0.75rem;
+        }
+        .form-group-field {
+          display: flex;
+          flex-direction: column;
+          gap: 0.35rem;
+        }
+        .field-label {
+          font-size: 0.75rem;
+          font-weight: 700;
+          color: #475569;
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+        }
+        .requirement-input {
+          padding: 0.55rem 0.75rem;
+          border: 1px solid #cbd5e1;
+          border-radius: 8px;
+          font-size: 0.85rem;
+          background: #ffffff;
+          outline: none;
+          color: #0b1d33;
+        }
+        .requirement-input:focus {
+          border-color: #1e50bc;
+        }
+        .flex-grow-notes {
+          flex: 1;
+        }
+        .notes-textarea {
+          width: 100%;
+          min-height: 100px;
+          padding: 0.65rem 0.75rem;
+          border: 1px solid #cbd5e1;
+          border-radius: 8px;
+          font-size: 0.85rem;
+          background: #ffffff;
+          outline: none;
+          resize: vertical;
+          color: #0b1d33;
+          line-height: 1.45;
+        }
+        .notes-textarea:focus {
+          border-color: #1e50bc;
+        }
+        .quick-note-chips-row {
+          display: flex;
+          align-items: center;
+          gap: 0.35rem;
+          flex-wrap: wrap;
+        }
+        .note-chip-btn {
+          font-size: 0.72rem;
+          font-weight: 600;
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+          padding: 0.2rem 0.5rem;
+          border-radius: 6px;
+          color: #475569;
+          cursor: pointer;
+        }
+        .note-chip-btn:hover {
+          background: #f1f5f9;
+          border-color: #cbd5e1;
+        }
+        .call-history-timeline {
+          background: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-radius: 10px;
+          padding: 0.75rem;
+          margin-top: 0.35rem;
+        }
+        .history-header {
+          display: flex;
+          align-items: center;
+          gap: 0.4rem;
+          font-size: 0.74rem;
+          font-weight: 700;
+          color: #64748b;
+          margin-bottom: 0.4rem;
+        }
+        .history-items-list {
+          display: flex;
+          flex-direction: column;
+          gap: 0.4rem;
+        }
+        .history-log-item {
+          background: #ffffff;
+          border: 1px solid #f1f5f9;
+          border-radius: 6px;
+          padding: 0.4rem 0.6rem;
+        }
+        .log-badge-line {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          font-size: 0.72rem;
+        }
+        .log-result-tag {
+          font-weight: 700;
+          color: #1e50bc;
+        }
+        .log-date-tag {
+          color: #94a3b8;
+        }
+        .log-note-text {
+          font-size: 0.75rem;
+          color: #475569;
+          margin: 0.2rem 0 0 0;
+        }
+
+        /* PILLAR 3: RESPONSE */
+        .response-content-layout {
+          display: flex;
+          flex-direction: column;
+          gap: 0.85rem;
+        }
+        .outcomes-button-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 0.65rem;
+        }
+        .outcome-card-btn {
+          display: flex;
+          align-items: center;
+          gap: 0.65rem;
+          padding: 0.75rem 0.85rem;
+          border-radius: 10px;
+          border: 1px solid #e2e8f0;
+          background: #ffffff;
+          cursor: pointer;
+          transition: all 0.15s ease;
           text-align: left;
-          position: relative;
-          transition: all 0.15s;
         }
-        .outcome-btn:hover {
-          transform: translateY(-2px);
+        .outcome-card-btn:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 3px 8px rgba(0, 0, 0, 0.04);
         }
-        .outcome-btn-text {
+        .outcome-label-wrap {
           display: flex;
           flex-direction: column;
         }
-        .outcome-primary {
-          font-size: 0.95rem;
-          font-weight: 700;
+        .outcome-name {
+          font-size: 0.86rem;
+          font-weight: 800;
+          color: #0b1d33;
         }
-        .outcome-hint {
-          font-size: 0.73rem;
-          opacity: 0.8;
-          margin-top: 1px;
+        .outcome-desc {
+          font-size: 0.68rem;
+          color: #64748b;
         }
-        .key-shortcut-hint {
-          position: absolute;
-          top: 6px;
-          right: 8px;
-          font-size: 0.65rem;
-          font-weight: 700;
-          text-transform: uppercase;
-          opacity: 0.55;
-          letter-spacing: 0.04em;
+        .outcome-interested {
+          background: #f0fdf4;
+          border-color: #bbf7d0;
+          color: #15803d;
         }
-
-        /* Colors for outcome buttons */
-        .btn-not-picked {
-          background: #fef2f2;
-          border-color: #fecaca;
-          color: #dc2626;
+        .outcome-interested:hover {
+          background: #dcfce7;
         }
-        .btn-not-picked:hover {
-          background: #fee2e2;
-          box-shadow: 0 4px 12px rgba(220, 38, 38, 0.18);
+        .outcome-connected {
+          background: #eff6ff;
+          border-color: #bfdbfe;
+          color: #1e40af;
         }
-
-        .btn-callback {
+        .outcome-connected:hover {
+          background: #dbeafe;
+        }
+        .outcome-callback {
           background: #fffbeb;
           border-color: #fde68a;
           color: #b45309;
         }
-        .btn-callback:hover,
-        .btn-callback.is-active-drop {
+        .outcome-callback:hover, .outcome-callback.active {
           background: #fef3c7;
-          border-color: #f59e0b;
-          box-shadow: 0 4px 12px rgba(217, 119, 6, 0.18);
         }
-
-        .btn-interested {
-          background: #f0fdf4;
-          border-color: #bbf7d0;
-          color: #16a34a;
-        }
-        .btn-interested:hover {
-          background: #dcfce7;
-          box-shadow: 0 4px 12px rgba(22, 163, 74, 0.18);
-        }
-
-        .btn-deal-won {
-          background: #fefce8;
-          border-color: #fef08a;
-          color: #854d0e;
-        }
-        .btn-deal-won:hover,
-        .btn-deal-won.is-active-drop {
-          background: #fef9c3;
-          border-color: #eab308;
-          box-shadow: 0 4px 12px rgba(234, 179, 8, 0.25);
-        }
-
-        .btn-not-interested {
+        .outcome-not-picked {
           background: #f8fafc;
           border-color: #e2e8f0;
-          color: #64748b;
-          grid-column: span 2;
+          color: #475569;
         }
-        .btn-not-interested:hover {
+        .outcome-not-picked:hover {
           background: #f1f5f9;
-          color: #334155;
+        }
+        .outcome-not-interested {
+          background: #fef2f2;
+          border-color: #fecaca;
+          color: #b91c1c;
+        }
+        .outcome-not-interested:hover {
+          background: #fee2e2;
+        }
+        .outcome-won {
+          background: #fffbeb;
+          border-color: #f59e0b;
+          color: #b45309;
+        }
+        .outcome-won:hover, .outcome-won.active {
+          background: #fde68a;
         }
 
-        /* Deal won presets panel */
-        .deal-won-presets-panel {
-          margin-top: 1.15rem;
-          background: #fefce8;
-          border: 1.5px solid #facc15;
-          border-radius: 12px;
-          padding: 1.15rem;
-          display: flex;
-          flex-direction: column;
-          gap: 0.85rem;
-          animation: slideDown 0.2s ease;
-        }
-        .deal-won-header {
-          display: flex;
-          align-items: center;
-          gap: 0.4rem;
-          font-size: 0.85rem;
-          font-weight: 700;
-          color: #854d0e;
-        }
-        .deal-amount-presets {
-          display: grid;
-          grid-template-columns: repeat(4, 1fr);
-          gap: 0.5rem;
-        }
-        .deal-preset-btn {
-          background: #ffffff;
-          border: 1px solid #facc15;
-          padding: 0.55rem 0.6rem;
-          border-radius: 8px;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          cursor: pointer;
-          transition: all 0.15s;
-        }
-        .deal-preset-btn:hover,
-        .deal-preset-btn.active {
-          background: #fef08a;
-          border-color: #ca8a04;
-          transform: translateY(-1px);
-        }
-        .deal-preset-btn span {
-          font-size: 0.82rem;
-          font-weight: 700;
-          color: #854d0e;
-        }
-        .deal-preset-btn small {
-          font-size: 0.68rem;
-          color: #a16207;
-        }
-        .deal-custom-row {
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-          border-top: 1px solid #fef08a;
-          padding-top: 0.75rem;
-        }
-        .deal-custom-row label {
-          font-size: 0.75rem;
-          font-weight: 700;
-          color: #854d0e;
-          white-space: nowrap;
-        }
-        .deal-custom-input {
-          flex: 1;
-          padding: 0.4rem 0.6rem;
-          border: 1px solid #ca8a04;
-          border-radius: 6px;
-          font-size: 0.85rem;
-          background: #ffffff;
-        }
-        .btn-confirm-deal-won {
-          background: #d97706;
-          color: #ffffff;
-          border: none;
-          padding: 0.45rem 0.95rem;
-          border-radius: 6px;
-          font-size: 0.82rem;
-          font-weight: 700;
-          cursor: pointer;
-          white-space: nowrap;
-          transition: background 0.15s;
-        }
-        .btn-confirm-deal-won:hover {
-          background: #b45309;
-        }
-        .text-amber {
-          color: #d97706;
-        }
-
-        /* Follow-up presets panel */
-        .followup-presets-panel {
-          margin-top: 1.15rem;
-          background: #fefce8;
-          border: 1.5px solid #fde047;
-          border-radius: 12px;
-          padding: 1.15rem;
-          display: flex;
-          flex-direction: column;
-          gap: 0.85rem;
-          animation: slideDown 0.2s ease;
-        }
-        .followup-panel-header {
-          display: flex;
-          align-items: center;
-          gap: 0.4rem;
-          font-size: 0.85rem;
-          font-weight: 700;
-          color: #854d0e;
-        }
-        .presets-row {
-          display: grid;
-          grid-template-columns: repeat(2, 1fr);
-          gap: 0.5rem;
-        }
-        .preset-btn {
-          background: #ffffff;
-          border: 1px solid #facc15;
-          padding: 0.55rem 0.75rem;
-          border-radius: 8px;
-          display: flex;
-          flex-direction: column;
-          align-items: flex-start;
-          cursor: pointer;
-          transition: all 0.15s;
-        }
-        .preset-btn:hover {
-          background: #fef9c3;
-          border-color: #eab308;
-          transform: translateY(-1px);
-        }
-        .preset-btn span {
-          font-size: 0.75rem;
-          color: #713f12;
-        }
-        .preset-btn strong {
-          font-size: 0.88rem;
-          color: #854d0e;
-        }
-        .custom-datetime-row {
-          display: flex;
-          align-items: flex-end;
-          gap: 0.5rem;
-          border-top: 1px solid #fef08a;
-          padding-top: 0.75rem;
-        }
-        .custom-date-field,
-        .custom-time-field {
-          display: flex;
-          flex-direction: column;
-          gap: 0.25rem;
-        }
-        .custom-date-field label,
-        .custom-time-field label {
-          font-size: 0.72rem;
-          font-weight: 600;
-          color: #713f12;
-        }
-        .date-input-sm {
-          padding: 0.35rem 0.5rem;
-          border: 1px solid #ca8a04;
-          border-radius: 6px;
-          font-size: 0.82rem;
-          background: #ffffff;
-        }
-        .btn-save-custom-followup {
-          background: #ca8a04;
-          color: #ffffff;
-          border: none;
-          padding: 0.45rem 0.85rem;
-          border-radius: 6px;
-          font-weight: 700;
-          font-size: 0.82rem;
-          cursor: pointer;
-        }
-        .btn-save-custom-followup:hover {
-          background: #a16207;
-        }
-
-        /* Brochure Box */
-        .brochure-heading-left {
-          display: flex;
-          align-items: center;
-          gap: 0.75rem;
-        }
-        .btn-edit-brochure-link {
-          display: flex;
-          align-items: center;
-          gap: 0.3rem;
-          background: transparent;
-          border: none;
-          color: #2563eb;
-          font-size: 0.78rem;
-          font-weight: 500;
-          cursor: pointer;
-          text-decoration: underline;
-        }
-        .brochure-status-badge {
-          display: flex;
-          align-items: center;
-          gap: 0.35rem;
-          font-size: 0.78rem;
-          font-weight: 600;
-          padding: 0.25rem 0.65rem;
-          border-radius: 9999px;
-        }
-        .brochure-status-badge.sent {
-          background: #dcfce7;
-          color: #15803d;
-        }
-        .brochure-status-badge.not-sent {
-          background: #f1f5f9;
-          color: #64748b;
-        }
-        .edit-brochure-drawer {
+        .callback-presets-card, .deal-won-presets-card {
           background: #f8fafc;
           border: 1px solid #cbd5e1;
           border-radius: 10px;
           padding: 0.85rem;
-          margin-bottom: 1rem;
           display: flex;
           flex-direction: column;
-          gap: 0.4rem;
+          gap: 0.55rem;
         }
-        .edit-brochure-drawer label {
-          font-size: 0.78rem;
-          font-weight: 600;
-          color: #334155;
+        .preset-card-title {
+          font-size: 0.74rem;
+          font-weight: 700;
+          color: #475569;
+          text-transform: uppercase;
         }
-        .brochure-url-input-row {
-          display: flex;
-          gap: 0.5rem;
-        }
-        .brochure-input {
-          flex: 1;
-          padding: 0.45rem 0.65rem;
-          border: 1px solid #cbd5e1;
-          border-radius: 6px;
-          font-size: 0.85rem;
-          outline: none;
-        }
-        .brochure-input:focus {
-          border-color: #2563eb;
-        }
-        .btn-save-url {
-          background: #2563eb;
-          color: #ffffff;
-          border: none;
-          padding: 0.45rem 0.85rem;
-          border-radius: 6px;
-          font-weight: 600;
-          font-size: 0.82rem;
-          cursor: pointer;
-        }
-        .brochure-action-row {
-          display: flex;
-          gap: 0.75rem;
-        }
-        .btn-send-brochure-wa {
-          flex: 1.4;
+        .preset-buttons-row {
           display: flex;
           align-items: center;
-          justify-content: center;
-          gap: 0.5rem;
+          gap: 0.35rem;
+          flex-wrap: wrap;
+        }
+        .preset-btn {
+          font-size: 0.75rem;
+          font-weight: 600;
+          padding: 0.35rem 0.65rem;
+          border-radius: 6px;
+          border: 1px solid #cbd5e1;
+          background: #ffffff;
+          color: #1e50bc;
+          cursor: pointer;
+        }
+        .preset-btn:hover, .preset-btn.active {
           background: #1e50bc;
           color: #ffffff;
+          border-color: #1e50bc;
+        }
+        .custom-datetime-row, .custom-deal-row {
+          display: flex;
+          align-items: center;
+          gap: 0.45rem;
+        }
+        .date-input-sm, .time-input-sm, .deal-input-sm {
+          padding: 0.4rem 0.6rem;
+          border: 1px solid #cbd5e1;
+          border-radius: 6px;
+          font-size: 0.8rem;
+          background: #ffffff;
+        }
+        .btn-confirm-callback, .btn-confirm-deal {
+          padding: 0.45rem 0.85rem;
+          border-radius: 6px;
           border: none;
-          padding: 0.85rem 1rem;
-          border-radius: 10px;
+          background: #1e50bc;
+          color: #ffffff;
+          font-size: 0.78rem;
           font-weight: 700;
-          font-size: 0.92rem;
           cursor: pointer;
-          box-shadow: 0 4px 12px rgba(30, 80, 188, 0.25);
-          transition: all 0.15s;
         }
-        .btn-send-brochure-wa:hover {
-          background: #1742a0;
-          transform: translateY(-1px);
+
+        .save-response-footer {
+          margin-top: auto;
+          padding-top: 0.5rem;
         }
-        .btn-toggle-brochure {
-          flex: 1;
+        .btn-save-and-advance {
+          width: 100%;
           display: flex;
           align-items: center;
           justify-content: center;
-          gap: 0.4rem;
-          background: #ffffff;
-          border: 1.5px solid #cbd5e1;
-          color: #475569;
-          padding: 0.85rem 0.75rem;
-          border-radius: 10px;
-          font-weight: 600;
-          font-size: 0.88rem;
-          cursor: pointer;
-          transition: all 0.15s;
-        }
-        .btn-toggle-brochure:hover {
-          background: #f8fafc;
-          border-color: #94a3b8;
-        }
-        .btn-toggle-brochure.is-marked {
-          border-color: #16a34a;
-          background: #f0fdf4;
-          color: #15803d;
-        }
-
-        /* Keyboard shortcuts pill */
-        .keyboard-shortcuts-pill {
-          display: flex;
-          flex-wrap: wrap;
-          align-items: center;
           gap: 0.5rem;
-          background: #f8fafc;
-          border: 1px solid #e2e8f0;
-          padding: 0.65rem 0.85rem;
+          padding: 0.85rem 1rem;
           border-radius: 10px;
-          font-size: 0.75rem;
-          color: #64748b;
+          border: none;
+          background: #1e50bc;
+          color: #ffffff;
+          font-size: 0.95rem;
+          font-weight: 800;
+          cursor: pointer;
+          box-shadow: 0 4px 12px rgba(30, 80, 188, 0.25);
+          transition: all 0.15s ease;
         }
-        .keys-label {
-          font-weight: 700;
-          color: #334155;
-          text-transform: uppercase;
-          letter-spacing: 0.04em;
+        .btn-save-and-advance:hover {
+          background: #18429c;
+          transform: translateY(-1px);
         }
-        .key-tag {
+
+        /* EMPTY STATE */
+        .empty-calling-card {
           background: #ffffff;
+          border: 2px dashed #cbd5e1;
+          border-radius: 20px;
+          padding: 3.5rem 2rem;
+          text-align: center;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 0.85rem;
+        }
+        .empty-calling-card h2 {
+          font-size: 1.35rem;
+          font-weight: 800;
+          margin: 0;
+        }
+        .empty-calling-card p {
+          font-size: 0.9rem;
+          color: #64748b;
+          max-width: 440px;
+          margin: 0;
+        }
+        .empty-actions-row {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+          margin-top: 0.5rem;
+        }
+        .btn-switch-queue-all {
+          padding: 0.65rem 1.15rem;
+          background: #1e50bc;
+          color: #ffffff;
+          border-radius: 8px;
+          border: none;
+          font-size: 0.85rem;
+          font-weight: 700;
+          cursor: pointer;
+        }
+        .btn-return-hub {
+          padding: 0.65rem 1.15rem;
+          background: #f1f5f9;
+          color: #334155;
+          border-radius: 8px;
           border: 1px solid #cbd5e1;
-          padding: 0.15rem 0.45rem;
-          border-radius: 4px;
-          font-family: var(--font-mono, monospace);
-          font-weight: 600;
-          color: #1e293b;
-        }
-
-        @media (max-width: 1024px) {
-          .dialer-content-grid {
-            grid-template-columns: 1fr;
-            gap: 1.15rem;
-          }
-          .client-main-card {
-            padding: 1.35rem;
-          }
-          .panel-box {
-            padding: 1.35rem;
-          }
-        }
-
-        @media (max-width: 768px) {
-          .dialer-wrapper {
-            gap: 1rem;
-          }
-          .dialer-top-bar {
-            flex-direction: column;
-            align-items: stretch;
-            gap: 0.65rem;
-            padding: 0.75rem 0.95rem;
-          }
-          .queue-filter-group {
-            width: 100%;
-          }
-          .top-right-controls {
-            justify-content: flex-end;
-          }
-          .keyboard-shortcuts-pill {
-            display: none;
-          }
-          .requirement-textarea,
-          .dialer-textarea {
-            font-size: 16px !important;
-          }
-          .progress-info-row {
-            gap: 0.5rem;
-          }
-          .progress-text {
-            font-size: 0.85rem;
-          }
-          .nav-btn {
-            padding: 0.45rem 0.75rem;
-            font-size: 0.78rem;
-            min-height: 38px;
-          }
-          .phone-call-banner {
-            flex-direction: column;
-            align-items: stretch;
-            gap: 0.85rem;
-            padding: 1rem;
-          }
-          .phone-val-row {
-            justify-content: space-between;
-          }
-          .call-buttons-row {
-            width: 100%;
-            display: flex;
-            gap: 0.5rem;
-          }
-          .btn-dial-primary,
-          .btn-wa-direct {
-            flex: 1;
-            justify-content: center;
-            min-height: 48px;
-            font-size: 0.95rem;
-          }
-          .brochure-action-row {
-            flex-direction: column;
-            gap: 0.5rem;
-          }
-          .btn-send-brochure-wa {
-            width: 100%;
-            min-height: 48px;
-            font-size: 0.92rem;
-            justify-content: center;
-          }
-          .btn-toggle-brochure {
-            width: 100%;
-            min-height: 42px;
-            font-size: 0.88rem;
-            justify-content: center;
-          }
-        }
-
-        @media (max-width: 540px) {
-          .dialer-top-bar {
-            padding: 0.65rem 0.75rem;
-          }
-          .client-main-card {
-            padding: 1rem;
-            border-radius: 14px;
-            gap: 1rem;
-          }
-          .client-header {
-            flex-direction: column;
-            align-items: flex-start;
-            gap: 0.75rem;
-          }
-          .client-business-name {
-            font-size: 1.35rem;
-            line-height: 1.22;
-            word-break: break-word;
-          }
-          .client-owner-name {
-            font-size: 0.88rem;
-          }
-          .call-timer-box {
-            align-self: flex-start;
-          }
-          .phone-display {
-            font-size: 1.35rem;
-          }
-          .panel-box {
-            padding: 1rem;
-            border-radius: 14px;
-          }
-          .panel-title {
-            font-size: 1rem;
-          }
-          .panel-title-row {
-            flex-direction: column;
-            align-items: flex-start;
-            gap: 0.25rem;
-            margin-bottom: 0.85rem;
-          }
-          .outcome-buttons-grid {
-            gap: 0.5rem;
-          }
-          .outcome-btn {
-            padding: 0.75rem 0.65rem;
-            min-height: 52px;
-          }
-          .outcome-primary {
-            font-size: 0.88rem;
-          }
-          .outcome-hint {
-            font-size: 0.7rem;
-            line-height: 1.2;
-          }
-          .key-shortcut-hint {
-            display: none;
-          }
-          .followup-presets-panel {
-            padding: 0.85rem;
-            gap: 0.65rem;
-          }
-          .presets-row {
-            grid-template-columns: 1fr 1fr;
-            gap: 0.4rem;
-          }
-          .preset-btn {
-            padding: 0.5rem 0.55rem;
-          }
-          .preset-btn span {
-            font-size: 0.7rem;
-          }
-          .preset-btn strong {
-            font-size: 0.82rem;
-          }
-          .custom-datetime-row {
-            flex-direction: column;
-            align-items: stretch;
-            gap: 0.5rem;
-          }
-          .custom-date-field,
-          .custom-time-field {
-            width: 100%;
-          }
-          .date-input-sm {
-            width: 100%;
-            min-height: 40px;
-            font-size: 16px !important;
-          }
-          .btn-save-custom-followup {
-            width: 100%;
-            min-height: 42px;
-            font-size: 0.88rem;
-            justify-content: center;
-          }
-          .edit-brochure-drawer {
-            padding: 0.75rem;
-          }
-          .brochure-url-input-row {
-            flex-direction: column;
-            gap: 0.4rem;
-          }
-          .brochure-input {
-            width: 100%;
-            min-height: 40px;
-            font-size: 16px !important;
-          }
-          .btn-save-url {
-            min-height: 40px;
-            width: 100%;
-            justify-content: center;
-          }
+          font-size: 0.85rem;
+          font-weight: 700;
+          cursor: pointer;
         }
       `}</style>
     </div>

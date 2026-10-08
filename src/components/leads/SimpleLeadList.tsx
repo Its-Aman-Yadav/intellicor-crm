@@ -41,6 +41,9 @@ interface SimpleLeadListProps {
   onOpenNewLead?: () => void;
   onUpdateLead?: (lead: Lead) => void;
   onOpenLead?: (lead: Lead) => void;
+  selectedCategory?: string;
+  selectedSheet?: string;
+  onClearCategoryFilter?: () => void;
 }
 
 export type TableFilterTab =
@@ -64,6 +67,9 @@ export default function SimpleLeadList({
   onOpenNewLead,
   onUpdateLead,
   onOpenLead,
+  selectedCategory,
+  selectedSheet,
+  onClearCategoryFilter,
 }: SimpleLeadListProps) {
   const [activeTab, setActiveTab] = useState<TableFilterTab>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -138,6 +144,20 @@ export default function SimpleLeadList({
     return leads.filter((l) => l.assignedRep === activeRep);
   }, [leads, activeRep]);
 
+  // Scoped leads filtered by Category and Sheet if active
+  const scopedLeads = useMemo(() => {
+    if (!selectedCategory && !selectedSheet) return repLeads;
+    return repLeads.filter((l) => {
+      const matchCat =
+        !selectedCategory ||
+        (l.groupName || 'Uncategorized').toLowerCase() === selectedCategory.toLowerCase();
+      const matchSheet =
+        !selectedSheet ||
+        (l.sheetName || 'Default Batch').toLowerCase() === selectedSheet.toLowerCase();
+      return matchCat && matchSheet;
+    });
+  }, [repLeads, selectedCategory, selectedSheet]);
+
   // Tab counters
   const counters = useMemo(() => {
     let dueToday = 0;
@@ -150,7 +170,7 @@ export default function SimpleLeadList({
     let notPicked = 0;
     let notInterested = 0;
 
-    repLeads.forEach((l) => {
+    scopedLeads.forEach((l) => {
       const isWon = l.status === 'Won' || l.callResult === 'Deal Won';
       if (isWon) {
         won++;
@@ -186,7 +206,7 @@ export default function SimpleLeadList({
     });
 
     return {
-      all: repLeads.length,
+      all: scopedLeads.length,
       due_today: dueToday,
       pending,
       tomorrow: tomorrowCount,
@@ -197,11 +217,11 @@ export default function SimpleLeadList({
       not_picked: notPicked,
       not_interested: notInterested,
     };
-  }, [repLeads, todayStr, tomorrowStr]);
+  }, [scopedLeads, todayStr, tomorrowStr]);
 
   // Filtered leads based on tab and search
   const filteredLeads = useMemo(() => {
-    let result = repLeads;
+    let result = scopedLeads;
 
     // Filter by Tab
     switch (activeTab) {
@@ -333,6 +353,32 @@ export default function SimpleLeadList({
           </button>
         </div>
       </div>
+
+      {/* Category / Sheet active filter banner */}
+      {(selectedCategory || selectedSheet) && (
+        <div className="active-cat-filter-banner">
+          <div className="cat-filter-text">
+            <span className="filter-tag-lead">Filtered List:</span>
+            {selectedCategory && (
+              <span className="badge-filter-cat">Category: <strong>{selectedCategory}</strong></span>
+            )}
+            {selectedSheet && (
+              <span className="badge-filter-sheet">Sheet: <strong>{selectedSheet}</strong></span>
+            )}
+            <span className="filter-count">({scopedLeads.length} leads)</span>
+          </div>
+          {onClearCategoryFilter && (
+            <button
+              type="button"
+              onClick={onClearCategoryFilter}
+              className="btn-clear-cat-filter"
+            >
+              <X size={14} />
+              <span>Show All Leads</span>
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Filter Tabs */}
       <div className="filter-tabs-row">
@@ -1135,6 +1181,61 @@ export default function SimpleLeadList({
         }
 
         /* Top Banner */
+        .active-cat-filter-banner {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          background: #eff6ff;
+          border: 1px solid #bfdbfe;
+          border-radius: 10px;
+          padding: 0.65rem 1.15rem;
+          margin-bottom: 0.5rem;
+        }
+        .cat-filter-text {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          font-size: 0.85rem;
+          color: #1e40af;
+          flex-wrap: wrap;
+        }
+        .filter-tag-lead {
+          font-weight: 700;
+          color: #1e3a8a;
+        }
+        .badge-filter-cat,
+        .badge-filter-sheet {
+          background: #ffffff;
+          border: 1px solid #bfdbfe;
+          padding: 0.2rem 0.6rem;
+          border-radius: 6px;
+          font-size: 0.8rem;
+          color: #1e50bc;
+        }
+        .filter-count {
+          font-size: 0.78rem;
+          color: #64748b;
+        }
+        .btn-clear-cat-filter {
+          display: flex;
+          align-items: center;
+          gap: 0.35rem;
+          background: #ffffff;
+          border: 1px solid #cbd5e1;
+          color: #475569;
+          padding: 0.35rem 0.75rem;
+          border-radius: 6px;
+          font-size: 0.78rem;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.15s;
+        }
+        .btn-clear-cat-filter:hover {
+          background: #f1f5f9;
+          color: #0b1d33;
+          border-color: #94a3b8;
+        }
+
         .list-top-banner {
           display: flex;
           align-items: center;

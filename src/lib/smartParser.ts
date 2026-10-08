@@ -12,15 +12,15 @@ export type DetectedField =
   | 'skip';
 
 export const DETECTED_FIELD_LABELS: Record<DetectedField, string> = {
-  businessName: '🏢 Business Name',
-  ownerName: '👤 Owner / Contact',
+  skip: '🚫 Not Included (Skip)',
   phone: '📞 Phone / Mobile',
+  businessName: '🏢 Business / Lead Name',
+  ownerName: '👤 Owner / Contact Person',
   city: '📍 City / Location',
+  notes: '📝 Notes / Requirement',
   industry: '🏷️ Industry / Category',
   website: '🌐 Website URL',
   instagram: '📸 Instagram',
-  notes: '📝 Notes / Requirement',
-  skip: '🚫 Skip this column',
 };
 
 export const COMMON_INDIAN_CITIES = new Set([

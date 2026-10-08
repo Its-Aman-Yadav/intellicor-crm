@@ -1,4 +1,4 @@
-import { Lead, CallLog, WhatsAppTemplate, ScoringSignals, CallScriptConfig } from '@/types/crm';
+import { Lead, CallLog, WhatsAppTemplate, ScoringSignals, CallScriptConfig, UserDailyTarget } from '@/types/crm';
 import { INITIAL_LEADS } from '@/data/seedData';
 import { DEFAULT_WHATSAPP_TEMPLATES } from './whatsapp';
 import { DEFAULT_CALL_SCRIPT_CONFIG } from '@/data/callScripts';
@@ -27,10 +27,421 @@ export function isMockLead(lead: Lead): boolean {
   return false;
 }
 
-const LEADS_STORAGE_KEY = 'intellicor_crm_leads_v3';
+const LEADS_STORAGE_KEY = 'intellicor_crm_leads_v4';
 const TEMPLATES_STORAGE_KEY = 'intellicor_crm_templates_v1';
 const CALL_SCRIPTS_STORAGE_KEY = 'intellicor_crm_call_scripts_v1';
 const ACTIVE_REP_KEY = 'intellicor_crm_active_rep_v1';
+const DAILY_TARGET_KEY = 'intellicor_crm_daily_target_v1';
+
+export const DEFAULT_DAILY_TARGET: UserDailyTarget = {
+  contactsTarget: 50,
+  durationMinutesTarget: 120, // 2 hours
+  mode: 'both',
+};
+
+export function getStoredDailyTarget(): UserDailyTarget {
+  if (typeof window === 'undefined') return DEFAULT_DAILY_TARGET;
+  try {
+    const raw = localStorage.getItem(DAILY_TARGET_KEY);
+    if (!raw) return DEFAULT_DAILY_TARGET;
+    const parsed = JSON.parse(raw);
+    return {
+      contactsTarget: Number(parsed.contactsTarget) || 50,
+      durationMinutesTarget: Number(parsed.durationMinutesTarget) || 120,
+      mode: parsed.mode || 'both',
+    };
+  } catch {
+    return DEFAULT_DAILY_TARGET;
+  }
+}
+
+export function saveStoredDailyTarget(target: UserDailyTarget): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(DAILY_TARGET_KEY, JSON.stringify(target));
+  } catch (err) {
+    console.error('Failed to save daily target to localStorage', err);
+  }
+}
+
+export function generateSampleCategoryLeads(): Lead[] {
+  const nowIso = new Date().toISOString();
+  const sampleLeads: Lead[] = [
+    // ----------------------------------------------------
+    // CATEGORY: Airbnb (Sheet: Airbnb Goa Hosts.xlsx)
+    // ----------------------------------------------------
+    {
+      id: `sample-abnb-1`,
+      businessName: 'Casa Azure Luxury Villa',
+      ownerName: 'Sunil D’Souza',
+      phone: '9822114455',
+      city: 'Goa (Candolim)',
+      industry: 'Travel & Hospitality',
+      groupName: 'Airbnb',
+      sheetName: 'Airbnb Goa Hosts.xlsx',
+      website: '',
+      googleProfile: '',
+      instagram: '',
+      signals: {
+        noWebsite: true,
+        badWebsite: false,
+        poorGoogleProfile: true,
+        inactiveInstagram: false,
+        goodBusinessReputation: true,
+        clearlySpendsOnMarketing: true,
+        multipleBranches: false,
+      },
+      score: 7,
+      priority: 'HOT',
+      status: 'New',
+      quotationStatus: 'Not Sent',
+      expectedValue: 15000,
+      notes: '4BHK private pool villa listed on Airbnb. Wants direct guest bookings to save 18% OTA commission.',
+      requirement: 'Direct booking website with WhatsApp widget and Google Maps listing.',
+      whatsappSent: false,
+      demoSent: false,
+      brochureSent: false,
+      callLogs: [],
+      assignedRep: 'Aman',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    },
+    {
+      id: `sample-abnb-2`,
+      businessName: 'Sunset Palms Beachfront Stay',
+      ownerName: 'Maria Fernandez',
+      phone: '9822336677',
+      city: 'Goa (Morjim)',
+      industry: 'Travel & Hospitality',
+      groupName: 'Airbnb',
+      sheetName: 'Airbnb Goa Hosts.xlsx',
+      website: '',
+      googleProfile: '',
+      instagram: '',
+      signals: {
+        noWebsite: true,
+        badWebsite: false,
+        poorGoogleProfile: true,
+        inactiveInstagram: true,
+        goodBusinessReputation: true,
+        clearlySpendsOnMarketing: false,
+        multipleBranches: false,
+      },
+      score: 8,
+      priority: 'HOT',
+      status: 'New',
+      quotationStatus: 'Not Sent',
+      expectedValue: 12000,
+      notes: 'Cottage resort near beach. Heavily dependent on Airbnb and Agoda.',
+      requirement: 'Looking for fast mobile site with photo gallery and booking calendar.',
+      whatsappSent: false,
+      demoSent: false,
+      brochureSent: false,
+      callLogs: [],
+      assignedRep: 'Aman',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    },
+    {
+      id: `sample-abnb-3`,
+      businessName: 'Serene Heritage Portuguese Villa',
+      ownerName: 'Karan Mehra',
+      phone: '9823447788',
+      city: 'Goa (Assagao)',
+      industry: 'Travel & Hospitality',
+      groupName: 'Airbnb',
+      sheetName: 'Airbnb Goa Hosts.xlsx',
+      website: '',
+      googleProfile: '',
+      instagram: '',
+      signals: {
+        noWebsite: true,
+        badWebsite: false,
+        poorGoogleProfile: false,
+        inactiveInstagram: false,
+        goodBusinessReputation: true,
+        clearlySpendsOnMarketing: true,
+        multipleBranches: false,
+      },
+      score: 6,
+      priority: 'WARM',
+      status: 'New',
+      quotationStatus: 'Not Sent',
+      expectedValue: 18000,
+      notes: 'High-end ₹35k/night villa. Looking to build direct guest database.',
+      requirement: 'Custom luxury branding and Google ranking.',
+      whatsappSent: false,
+      demoSent: false,
+      brochureSent: false,
+      callLogs: [],
+      assignedRep: 'Aman',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    },
+    {
+      id: `sample-abnb-4`,
+      businessName: 'Ocean Breeze Studio Apartments',
+      ownerName: 'Nikhil Rane',
+      phone: '9822558899',
+      city: 'Goa (Baga)',
+      industry: 'Travel & Hospitality',
+      groupName: 'Airbnb',
+      sheetName: 'Airbnb Goa Hosts.xlsx',
+      website: '',
+      googleProfile: '',
+      instagram: '',
+      signals: {
+        noWebsite: true,
+        badWebsite: false,
+        poorGoogleProfile: true,
+        inactiveInstagram: true,
+        goodBusinessReputation: true,
+        clearlySpendsOnMarketing: false,
+        multipleBranches: false,
+      },
+      score: 7,
+      priority: 'HOT',
+      status: 'New',
+      quotationStatus: 'Not Sent',
+      expectedValue: 10000,
+      notes: '6 service apartments. Wants WhatsApp integration for guest check-ins.',
+      requirement: 'Affordable booking landing page.',
+      whatsappSent: false,
+      demoSent: false,
+      brochureSent: false,
+      callLogs: [],
+      assignedRep: 'Aman',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    },
+
+    // ----------------------------------------------------
+    // CATEGORY: Hotels (Sheet: Hotels Mumbai & Pune.xlsx)
+    // ----------------------------------------------------
+    {
+      id: `sample-htl-1`,
+      businessName: 'Grand Imperial Boutique Hotel',
+      ownerName: 'Vikramaditya Singhania',
+      phone: '9820011223',
+      city: 'Mumbai (Andheri)',
+      industry: 'Travel & Hospitality',
+      groupName: 'Hotels',
+      sheetName: 'Hotels Mumbai & Pune.xlsx',
+      website: '',
+      googleProfile: '',
+      instagram: '',
+      signals: {
+        noWebsite: false,
+        badWebsite: true,
+        poorGoogleProfile: true,
+        inactiveInstagram: true,
+        goodBusinessReputation: true,
+        clearlySpendsOnMarketing: true,
+        multipleBranches: true,
+      },
+      score: 9,
+      priority: 'HOT',
+      status: 'New',
+      quotationStatus: 'Not Sent',
+      expectedValue: 35000,
+      notes: '40 room hotel with banquet. Old outdated website without mobile compatibility.',
+      requirement: 'Complete web revamp + direct tariff engine + banquet lead generation.',
+      whatsappSent: false,
+      demoSent: false,
+      brochureSent: false,
+      callLogs: [],
+      assignedRep: 'Aman',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    },
+    {
+      id: `sample-htl-2`,
+      businessName: 'The Sapphire Executive Suites',
+      ownerName: 'Gaurav Kulkarni',
+      phone: '9820122334',
+      city: 'Pune (Hinjawadi)',
+      industry: 'Travel & Hospitality',
+      groupName: 'Hotels',
+      sheetName: 'Hotels Mumbai & Pune.xlsx',
+      website: '',
+      googleProfile: '',
+      instagram: '',
+      signals: {
+        noWebsite: true,
+        badWebsite: false,
+        poorGoogleProfile: true,
+        inactiveInstagram: false,
+        goodBusinessReputation: true,
+        clearlySpendsOnMarketing: true,
+        multipleBranches: false,
+      },
+      score: 7,
+      priority: 'HOT',
+      status: 'New',
+      quotationStatus: 'Not Sent',
+      expectedValue: 25000,
+      notes: 'Corporate business hotel in tech park. Corporate inquiries mostly via phone.',
+      requirement: 'Corporate corporate rates form and Google local SEO.',
+      whatsappSent: false,
+      demoSent: false,
+      brochureSent: false,
+      callLogs: [],
+      assignedRep: 'Aman',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    },
+    {
+      id: `sample-htl-3`,
+      businessName: 'Orchid Residency & Banquet',
+      ownerName: 'Rajeev Malhotra',
+      phone: '9820233445',
+      city: 'Mumbai (Chembur)',
+      industry: 'Travel & Hospitality',
+      groupName: 'Hotels',
+      sheetName: 'Hotels Mumbai & Pune.xlsx',
+      website: '',
+      googleProfile: '',
+      instagram: '',
+      signals: {
+        noWebsite: true,
+        badWebsite: false,
+        poorGoogleProfile: true,
+        inactiveInstagram: true,
+        goodBusinessReputation: true,
+        clearlySpendsOnMarketing: false,
+        multipleBranches: false,
+      },
+      score: 7,
+      priority: 'HOT',
+      status: 'New',
+      quotationStatus: 'Not Sent',
+      expectedValue: 28000,
+      notes: 'Wedding banquet hall and 25 rooms. Looking to get weekend wedding leads.',
+      requirement: 'Banquet package showcase and WhatsApp brochure flow.',
+      whatsappSent: false,
+      demoSent: false,
+      brochureSent: false,
+      callLogs: [],
+      assignedRep: 'Aman',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    },
+
+    // ----------------------------------------------------
+    // CATEGORY: Manufacturing (Sheet: MIDC Industrial Units.xlsx)
+    // ----------------------------------------------------
+    {
+      id: `sample-mfg-1`,
+      businessName: 'Precision CNC Works & Tooling',
+      ownerName: 'Dinesh Panchal',
+      phone: '9819033445',
+      city: 'Pune (Bhosari MIDC)',
+      industry: 'Other Local Business',
+      groupName: 'Manufacturing',
+      sheetName: 'MIDC Industrial Units.xlsx',
+      website: '',
+      googleProfile: '',
+      instagram: '',
+      signals: {
+        noWebsite: true,
+        badWebsite: false,
+        poorGoogleProfile: true,
+        inactiveInstagram: true,
+        goodBusinessReputation: true,
+        clearlySpendsOnMarketing: false,
+        multipleBranches: false,
+      },
+      score: 7,
+      priority: 'HOT',
+      status: 'New',
+      quotationStatus: 'Not Sent',
+      expectedValue: 30000,
+      notes: 'Precision auto component tooling manufacturer. Seeking domestic and export RFQs.',
+      requirement: 'B2B machinery portfolio and instant WhatsApp RFQ inquiry form.',
+      whatsappSent: false,
+      demoSent: false,
+      brochureSent: false,
+      callLogs: [],
+      assignedRep: 'Aman',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    },
+    {
+      id: `sample-mfg-2`,
+      businessName: 'Apex Polymers & Moulding Corp',
+      ownerName: 'Hemant Shah',
+      phone: '9819144556',
+      city: 'Mumbai (Thane MIDC)',
+      industry: 'Other Local Business',
+      groupName: 'Manufacturing',
+      sheetName: 'MIDC Industrial Units.xlsx',
+      website: '',
+      googleProfile: '',
+      instagram: '',
+      signals: {
+        noWebsite: false,
+        badWebsite: true,
+        poorGoogleProfile: true,
+        inactiveInstagram: true,
+        goodBusinessReputation: true,
+        clearlySpendsOnMarketing: true,
+        multipleBranches: false,
+      },
+      score: 8,
+      priority: 'HOT',
+      status: 'New',
+      quotationStatus: 'Not Sent',
+      expectedValue: 40000,
+      notes: 'Plastic injection moulding plant. Current site broken on mobile phones.',
+      requirement: 'Digital product catalog with spec downloads.',
+      whatsappSent: false,
+      demoSent: false,
+      brochureSent: false,
+      callLogs: [],
+      assignedRep: 'Aman',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    },
+    {
+      id: `sample-mfg-3`,
+      businessName: 'Shree Krishna Fabrications & Sheet Metal',
+      ownerName: 'Sanjay Patil',
+      phone: '9819255667',
+      city: 'Navi Mumbai (Rabale MIDC)',
+      industry: 'Other Local Business',
+      groupName: 'Manufacturing',
+      sheetName: 'MIDC Industrial Units.xlsx',
+      website: '',
+      googleProfile: '',
+      instagram: '',
+      signals: {
+        noWebsite: true,
+        badWebsite: false,
+        poorGoogleProfile: true,
+        inactiveInstagram: true,
+        goodBusinessReputation: true,
+        clearlySpendsOnMarketing: false,
+        multipleBranches: false,
+      },
+      score: 7,
+      priority: 'HOT',
+      status: 'New',
+      quotationStatus: 'Not Sent',
+      expectedValue: 25000,
+      notes: 'Laser cutting and heavy industrial sheet metal fabrication.',
+      requirement: 'Google ranking for industrial sheet metal fabrication in Navi Mumbai.',
+      whatsappSent: false,
+      demoSent: false,
+      brochureSent: false,
+      callLogs: [],
+      assignedRep: 'Aman',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    },
+  ];
+
+  return sampleLeads;
+}
 
 export function getStoredActiveRep(): string {
   if (typeof window === 'undefined') return 'All';
@@ -45,9 +456,10 @@ export function setStoredActiveRep(rep: string): void {
 export function getStoredLeads(): Lead[] {
   if (typeof window === 'undefined') return [];
   try {
-    // Purge older mock storage keys
+    // Purge older mock/sample storage keys
     localStorage.removeItem('intellicor_crm_leads_v1');
     localStorage.removeItem('intellicor_crm_leads_v2');
+    localStorage.removeItem('intellicor_crm_leads_v3');
 
     const raw = localStorage.getItem(LEADS_STORAGE_KEY);
     if (!raw) {
@@ -68,6 +480,7 @@ export function clearAllStoredLeads(): void {
   localStorage.setItem(LEADS_STORAGE_KEY, JSON.stringify([]));
   localStorage.removeItem('intellicor_crm_leads_v1');
   localStorage.removeItem('intellicor_crm_leads_v2');
+  localStorage.removeItem('intellicor_crm_leads_v3');
 }
 
 export function saveStoredLeads(leads: Lead[]): void {
@@ -145,6 +558,8 @@ export function resetToSeedData(): Lead[] {
 export function exportLeadsToCSV(leads: Lead[]): void {
   const headers = [
     'ID',
+    'Category / Group',
+    'Sheet / Source',
     'Business Name',
     'Owner / Contact Name',
     'Phone',
@@ -182,6 +597,8 @@ export function exportLeadsToCSV(leads: Lead[]): void {
 
   const rows = leads.map((lead) => [
     escapeCSV(lead.id),
+    escapeCSV(lead.groupName || 'General Leads'),
+    escapeCSV(lead.sheetName || 'Uploaded Sheet'),
     escapeCSV(lead.businessName),
     escapeCSV(lead.ownerName),
     escapeCSV(lead.phone),
@@ -317,6 +734,8 @@ export function parseCSVToLeads(csvText: string): Lead[] {
       phone: phone || '',
       city: city || 'Mumbai',
       industry: industry || 'Other Local Business',
+      groupName: 'General Leads',
+      sheetName: 'Imported CSV Sheet.csv',
       website: website || '',
       googleProfile: '',
       instagram: instagram || '',

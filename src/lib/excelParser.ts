@@ -99,6 +99,9 @@ export interface ConvertOptions {
   defaultCity?: string;
   defaultIndustry?: string;
   assignedRep?: string;
+  groupName?: string;
+  sheetName?: string;
+  batchId?: string;
 }
 
 /**
@@ -114,6 +117,9 @@ export function convertMatrixToLeads(
     defaultCity = 'Local Area',
     defaultIndustry = 'Other Local Business',
     assignedRep = 'Aman',
+    groupName = 'General Leads',
+    sheetName = 'Uploaded Sheet',
+    batchId,
   } = options;
 
   const dataRows = hasHeader ? matrix.slice(1) : matrix;
@@ -193,6 +199,9 @@ export function convertMatrixToLeads(
       phone: cleanedPhone,
       city: city || 'Local Area',
       industry: industry || 'Other Local Business',
+      groupName: groupName.trim() || 'General Leads',
+      sheetName: sheetName.trim() || 'Uploaded Sheet',
+      batchId: batchId || `batch-${Date.now()}`,
       website: website || '',
       googleProfile: '',
       instagram: instagram || '',
@@ -268,6 +277,8 @@ export function exportLeadsToExcel(leads: Lead[], filename?: string): void {
 
     return {
       '#': idx + 1,
+      'Category / Group': l.groupName || 'General Leads',
+      'Sheet / Source': l.sheetName || 'Uploaded Sheet',
       'Business / Company Name': l.businessName || '',
       'Owner / Contact Name': l.ownerName || '',
       'Phone Number': l.phone || '',
