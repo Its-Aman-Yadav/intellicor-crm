@@ -2866,15 +2866,97 @@ export default function DailyDashboard({
           50% { opacity: 0.6; }
         }
 
+        @media (max-width: 1100px) {
+          .dashboard-header-banner {
+            grid-template-columns: 1fr;
+            gap: 1rem;
+          }
+        }
         @media (max-width: 1024px) {
           .tasks-layout-grid {
             grid-template-columns: 1fr;
           }
         }
-        @media (max-width: 1100px) {
+        @media (max-width: 768px) {
           .dashboard-header-banner {
+            padding: 0.9rem;
+            gap: 0.85rem;
+            border-radius: 14px;
+          }
+          .banner-greeting-title {
+            font-size: 1.15rem;
+          }
+          .quote-body-text {
+            font-size: 0.8rem;
+          }
+          .exec-analytics-grid {
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.75rem;
+          }
+        }
+        @media (max-width: 580px) {
+          .dashboard-root {
+            gap: 1.15rem;
+          }
+          .dashboard-header-banner {
+            padding: 0.75rem 0.85rem;
+          }
+          .banner-quote-capsule {
+            padding: 0.6rem 0.75rem;
+          }
+          .quote-top-bar {
+            flex-wrap: wrap;
+            gap: 0.35rem;
+          }
+          .quote-slot-indicator {
+            width: 100%;
+            justify-content: space-between;
+          }
+          .quote-footer-bar {
+            flex-wrap: wrap;
+            gap: 0.3rem;
+          }
+          .date-controller-card {
+            padding: 0.5rem 0.65rem;
+          }
+          .btn-date-nav {
+            width: 32px;
+            height: 32px;
+          }
+          .date-picker-box {
+            height: 32px;
+          }
+          .exec-analytics-grid {
             grid-template-columns: 1fr;
-            gap: 1rem;
+          }
+          .targets-grid {
+            grid-template-columns: 1fr;
+          }
+          .section-title-row {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 0.25rem;
+          }
+          .todo-form-controls {
+            flex-direction: column;
+            align-items: stretch;
+          }
+          .todo-priority-select,
+          .todo-date-input,
+          .todo-add-btn {
+            width: 100%;
+          }
+          .task-column-card {
+            min-height: auto;
+            padding: 0.9rem 0.75rem;
+          }
+          .task-actions-row {
+            flex-wrap: wrap;
+          }
+          .task-actions-row > * {
+            flex: 1;
+            min-width: 100px;
+            justify-content: center;
           }
         }
       `}</style>

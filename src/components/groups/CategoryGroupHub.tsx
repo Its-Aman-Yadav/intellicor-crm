@@ -1049,11 +1049,6 @@ export default function CategoryGroupHub({
           grid-template-columns: repeat(4, 1fr);
           gap: 1rem;
         }
-        @media (max-width: 900px) {
-          .global-stats-grid {
-            grid-template-columns: repeat(2, 1fr);
-          }
-        }
         .stat-card {
           background: #ffffff;
           border: 1px solid #e2e8f0;
@@ -1827,6 +1822,108 @@ export default function CategoryGroupHub({
           font-size: 0.88rem;
           font-weight: 700;
           cursor: pointer;
+        }
+
+        /* MOBILE SCREEN OPTIMIZATIONS */
+        @media (max-width: 900px) {
+          .global-stats-grid {
+            grid-template-columns: repeat(2, 1fr);
+          }
+        }
+        @media (max-width: 768px) {
+          .category-hub-page {
+            padding: 1rem 0.75rem 2.5rem 0.75rem;
+            gap: 1.25rem;
+          }
+          .hub-hero-banner {
+            padding: 1.15rem 1rem;
+            flex-direction: column;
+            align-items: stretch;
+            gap: 1rem;
+          }
+          .banner-right-actions {
+            flex-direction: column;
+            align-items: stretch;
+            width: 100%;
+          }
+          .daily-target-quickcard {
+            width: 100%;
+            min-width: 0;
+          }
+          .btn-upload-new-sheet {
+            width: 100%;
+            justify-content: center;
+          }
+          .hub-filters-bar {
+            flex-direction: column;
+            align-items: stretch;
+            gap: 0.75rem;
+          }
+          .category-pill-tabs {
+            overflow-x: auto;
+            flex-wrap: nowrap;
+            padding-bottom: 0.35rem;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
+          }
+          .category-pill-tabs::-webkit-scrollbar {
+            display: none;
+          }
+          .category-pill {
+            flex-shrink: 0;
+          }
+          .search-and-demo-row {
+            flex-direction: column;
+            align-items: stretch;
+            width: 100%;
+          }
+          .search-input-wrap {
+            width: 100%;
+            min-width: 0;
+          }
+          .btn-load-sample-sheets {
+            width: 100%;
+            justify-content: center;
+          }
+          .category-section-card {
+            padding: 1.1rem 0.85rem;
+          }
+          .category-header {
+            flex-direction: column;
+            align-items: stretch;
+            gap: 0.75rem;
+          }
+          .category-header-actions {
+            width: 100%;
+            justify-content: space-between;
+          }
+          .sheets-table-wrap {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+          }
+        }
+        @media (max-width: 600px) {
+          .global-stats-grid {
+            grid-template-columns: 1fr;
+            gap: 0.75rem;
+          }
+          .stat-card {
+            padding: 1rem 0.95rem;
+          }
+          .pace-stepper-btn {
+            width: 34px;
+            height: 34px;
+          }
+          .pace-input-box {
+            height: 34px;
+          }
+          .pace-presets-row {
+            gap: 0.35rem;
+          }
+          .pace-preset-btn {
+            padding: 0.35rem 0.2rem;
+            font-size: 0.72rem;
+          }
         }
       `}</style>
     </div>
