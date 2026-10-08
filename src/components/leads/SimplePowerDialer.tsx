@@ -426,15 +426,41 @@ export default function SimplePowerDialer({
   const rawCleanPhone = currentLead ? cleanPhoneNumber(currentLead.phone) : '';
   const telLink = `tel:${rawCleanPhone.startsWith('+') ? rawCleanPhone : `+${rawCleanPhone}`}`;
 
-  // Direct WhatsApp link
-  const waDirectLink = currentLead
-    ? createWhatsAppLink(
-        currentLead.phone,
-        `Hello ${currentLead.ownerName || currentLead.businessName}, this side ${
-          activeRep !== 'All' && activeRep !== 'All Reps' ? activeRep : 'Aman'
-        } from Intellicor. Sharing our catalog and demo link as discussed.`
-      )
+  // Exact Intellicor Brochure Message as requested
+  const getBrochureMessage = (lead: Lead) => {
+    const business = lead.businessName || lead.ownerName || 'your business';
+    return `Hi,\n\nGreetings from *Intellicor Technologies!*\n\nI've shared our brochure highlighting our services in *Website Development, Social Media Marketing, and Google Business Profile Optimization.*\n\nWe'd love to help ${business} strengthen its online presence and generate more property inquiries.\n\n🌐 https://intellicortechnologies.com  \n📧 aman@intellicortechnologies.com\n\nWould you be available for a quick 10-minute discussion this week?\n\nBest regards,  \n*Team Intellicor Technologies*`;
+  };
+
+  // Direct WhatsApp Brochure link with exact template
+  const waBrochureLink = currentLead
+    ? createWhatsAppLink(currentLead.phone, getBrochureMessage(currentLead))
     : '#';
+
+  const handleSendWhatsAppBrochure = () => {
+    if (!currentLead) return;
+    if (!currentLead.brochureSent) {
+      onSaveCallLog(
+        currentLead.id,
+        {
+          repName:
+            activeRep !== 'All' && activeRep !== 'All Reps'
+              ? activeRep
+              : currentLead.assignedRep || 'Aman',
+          result: selectedDisposition || currentLead.callResult || 'Connected',
+          notes: currentNotes,
+          askedForWhatsApp: true,
+          durationSeconds: callTimer,
+          brochureSent: true,
+        },
+        {
+          brochureSent: true,
+          brochureSentDate: new Date().toISOString().slice(0, 10),
+        }
+      );
+    }
+    showToast(`✓ Opened WhatsApp & sent brochure to ${currentLead.businessName}`);
+  };
 
   const totalInQueue = queueLeads.length;
   const progressPercent = totalInQueue > 0 ? Math.round(((currentIndex + 1) / totalInQueue) * 100) : 0;
@@ -531,56 +557,62 @@ export default function SimplePowerDialer({
       <section className="timers-and-target-strip">
         {/* Active Call Timer */}
         <div className="timer-badge-box active-call-timer">
-          <div className="timer-box-label">
-            <PhoneCall size={14} className="text-blue" />
-            <span>Call Duration</span>
+          <div className="timer-box-meta">
+            <div className="timer-box-label">
+              <PhoneCall size={12} className="text-blue" />
+              <span>Call Duration</span>
+            </div>
+            <div className="timer-micro-actions">
+              <button
+                type="button"
+                onClick={() => setIsTimerRunning(!isTimerRunning)}
+                className="btn-mini-timer"
+                title={isTimerRunning ? 'Pause timer' : 'Resume timer'}
+              >
+                {isTimerRunning ? <Pause size={10} /> : <Play size={10} />}
+              </button>
+              <button
+                type="button"
+                onClick={() => setCallTimer(0)}
+                className="btn-mini-timer"
+                title="Reset timer to 0"
+              >
+                <RotateCcw size={10} />
+              </button>
+            </div>
           </div>
           <div className="timer-clock-digits">
-            <Clock size={16} className="text-blue" />
+            <Clock size={15} className="text-blue" />
             <span>{formatTimer(callTimer)}</span>
-          </div>
-          <div className="timer-micro-actions">
-            <button
-              type="button"
-              onClick={() => setIsTimerRunning(!isTimerRunning)}
-              className="btn-mini-timer"
-              title={isTimerRunning ? 'Pause timer' : 'Resume timer'}
-            >
-              {isTimerRunning ? <Pause size={12} /> : <Play size={12} />}
-            </button>
-            <button
-              type="button"
-              onClick={() => setCallTimer(0)}
-              className="btn-mini-timer"
-              title="Reset timer to 0"
-            >
-              <RotateCcw size={12} />
-            </button>
           </div>
         </div>
 
         {/* Average Call Duration per Call */}
         <div className="timer-badge-box">
-          <div className="timer-box-label">
-            <Clock size={14} className="text-slate" />
-            <span>Avg / Call</span>
+          <div className="timer-box-meta">
+            <div className="timer-box-label">
+              <Clock size={12} className="text-slate" />
+              <span>Avg / Call</span>
+            </div>
+            <span className="micro-subtext">calculated avg</span>
           </div>
           <div className="stat-digits">
             <span>{formatHumanDuration(averageCallDurationSec)}</span>
           </div>
-          <span className="micro-subtext">calculated avg</span>
         </div>
 
         {/* Total Session Duration */}
         <div className="timer-badge-box">
-          <div className="timer-box-label">
-            <Clock size={14} className="text-emerald" />
-            <span>Session Duration</span>
+          <div className="timer-box-meta">
+            <div className="timer-box-label">
+              <Clock size={12} className="text-emerald" />
+              <span>Session Duration</span>
+            </div>
+            <span className="micro-subtext">{sessionMinutes}m active</span>
           </div>
           <div className="stat-digits">
             <span>{formatTimer(sessionTimer)}</span>
           </div>
-          <span className="micro-subtext">{sessionMinutes} mins active</span>
         </div>
 
         {/* Daily Target Progress Widget */}
@@ -589,31 +621,33 @@ export default function SimplePowerDialer({
           onClick={onOpenTargetModal}
           title="Click to edit your daily target"
         >
-          <div className="target-box-header">
-            <div className="target-box-label">
-              <Target size={14} className="text-indigo" />
-              <span>Daily Target</span>
+          <div className="target-box-inner">
+            <div className="target-box-header">
+              <div className="target-box-label">
+                <Target size={12} className="text-indigo" />
+                <span>Daily Target</span>
+              </div>
+              <button type="button" className="btn-edit-target" onClick={onOpenTargetModal}>
+                <Edit3 size={10} />
+                <span>Edit Goal</span>
+              </button>
             </div>
-            <button type="button" className="btn-edit-target" onClick={onOpenTargetModal}>
-              <Edit3 size={11} />
-              <span>Edit Goal</span>
-            </button>
-          </div>
 
-          <div className="target-dual-progress">
-            <div className="target-progress-bar-track">
-              <div
-                className="target-progress-bar-fill"
-                style={{ width: `${targetPercentage}%` }}
-              />
-            </div>
-            <div className="target-dual-labels">
-              <span>
-                <strong>{todayCallsCount}</strong> / {dailyTarget.contactsTarget} calls ({targetPercentage}%)
-              </span>
-              <span>
-                <strong>{sessionMinutes}m</strong> / {dailyTarget.durationMinutesTarget}m
-              </span>
+            <div className="target-dual-progress">
+              <div className="target-progress-bar-track">
+                <div
+                  className="target-progress-bar-fill"
+                  style={{ width: `${targetPercentage}%` }}
+                />
+              </div>
+              <div className="target-dual-labels">
+                <span>
+                  <strong>{todayCallsCount}</strong> / {dailyTarget.contactsTarget} calls ({targetPercentage}%)
+                </span>
+                <span>
+                  <strong>{sessionMinutes}m</strong> / {dailyTarget.durationMinutesTarget}m
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -659,31 +693,30 @@ export default function SimplePowerDialer({
             <div className="contact-main-info">
               <div className="contact-title-row">
                 <span className="contact-seq-pill">#{currentIndex + 1}</span>
-                <h1 className="contact-business-name">{currentLead.businessName}</h1>
+                <h1 className="contact-business-name" title={currentLead.businessName}>
+                  {currentLead.businessName}
+                </h1>
                 {currentLead.status && (
                   <span className={`status-pill status-${currentLead.status.toLowerCase().replace(/\s+/g, '-')}`}>
                     {currentLead.status}
                   </span>
                 )}
-              </div>
-
-              <div className="contact-meta-row">
                 {currentLead.ownerName && currentLead.ownerName !== currentLead.businessName && (
-                  <div className="meta-item">
-                    <User size={14} className="text-muted" />
-                    <span>Contact: <strong>{currentLead.ownerName}</strong></span>
-                  </div>
+                  <span className="contact-inline-meta" title="Contact Person">
+                    <User size={13} className="text-muted" />
+                    <span>{currentLead.ownerName}</span>
+                  </span>
                 )}
                 {currentLead.city && (
-                  <div className="meta-item">
-                    <MapPin size={14} className="text-muted" />
+                  <span className="contact-inline-meta" title="Location">
+                    <MapPin size={13} className="text-muted" />
                     <span>{currentLead.city}</span>
-                  </div>
+                  </span>
                 )}
-                <div className="meta-item">
-                  <FolderOpen size={14} className="text-muted" />
+                <span className="contact-inline-meta" title="Category">
+                  <FolderOpen size={13} className="text-muted" />
                   <span>Category: <strong>{currentLead.groupName || 'General'}</strong></span>
-                </div>
+                </span>
               </div>
             </div>
 
@@ -697,7 +730,7 @@ export default function SimplePowerDialer({
                   className="btn-copy-num"
                   title="Copy number"
                 >
-                  {isCopied ? <Check size={14} className="text-emerald" /> : <Copy size={14} />}
+                  {isCopied ? <Check size={13} className="text-emerald" /> : <Copy size={13} />}
                 </button>
               </div>
 
@@ -706,19 +739,20 @@ export default function SimplePowerDialer({
                 className="btn-action-call"
                 title="Dial directly via phone / FaceTime"
               >
-                <PhoneCall size={18} />
+                <PhoneCall size={16} />
                 <span>Call Now</span>
               </a>
 
               <a
-                href={waDirectLink}
+                href={waBrochureLink}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="btn-action-whatsapp"
-                title="Open WhatsApp chat with pre-written message"
+                title="Send Brochure on WhatsApp"
+                onClick={handleSendWhatsAppBrochure}
               >
-                <MessageCircle size={18} />
-                <span>WhatsApp</span>
+                <MessageCircle size={16} />
+                <span>WhatsApp Brochure</span>
               </a>
             </div>
           </section>
@@ -877,7 +911,7 @@ export default function SimplePowerDialer({
                 <div className="form-group-field flex-grow-notes">
                   <label className="field-label">Notes from Current Call:</label>
                   <textarea
-                    rows={4}
+                    rows={3}
                     value={currentNotes}
                     onChange={(e) => setCurrentNotes(e.target.value)}
                     placeholder="Type key discussion points, pricing, or client feedback here..."
@@ -1188,24 +1222,29 @@ export default function SimplePowerDialer({
 
       <style jsx>{`
         .telecaller-workspace {
-          max-width: 1400px;
+          max-width: 1440px;
+          width: 100%;
+          height: 100%;
+          max-height: 100%;
           margin: 0 auto;
-          padding: 1rem 1.25rem 3rem 1.25rem;
+          padding: 0;
           display: flex;
           flex-direction: column;
-          gap: 1rem;
+          gap: 0.35rem;
           color: #0b1d33;
+          overflow: hidden;
+          box-sizing: border-box;
         }
 
         .telecaller-toast {
           position: fixed;
-          bottom: 2rem;
-          right: 2rem;
+          bottom: 1.5rem;
+          right: 1.5rem;
           background: #0f172a;
           color: #ffffff;
-          padding: 0.85rem 1.35rem;
-          border-radius: 10px;
-          font-size: 0.9rem;
+          padding: 0.65rem 1.15rem;
+          border-radius: 8px;
+          font-size: 0.85rem;
           font-weight: 600;
           box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
           z-index: 9999;
@@ -1229,30 +1268,33 @@ export default function SimplePowerDialer({
           justify-content: space-between;
           background: #ffffff;
           border: 1px solid #e2e8f0;
-          border-radius: 12px;
-          padding: 0.65rem 1rem;
-          gap: 1rem;
-          flex-wrap: wrap;
+          border-radius: 8px;
+          padding: 0.25rem 0.75rem;
+          gap: 0.65rem;
+          flex-shrink: 0;
+          min-height: 36px;
+          box-sizing: border-box;
         }
         .nav-left-group {
           display: flex;
           align-items: center;
-          gap: 0.75rem;
-          flex-wrap: wrap;
+          gap: 0.5rem;
+          flex-wrap: nowrap;
         }
         .btn-back-to-hub {
           display: flex;
           align-items: center;
-          gap: 0.4rem;
-          padding: 0.4rem 0.75rem;
-          border-radius: 8px;
+          gap: 0.35rem;
+          padding: 0.22rem 0.6rem;
+          border-radius: 6px;
           border: 1px solid #cbd5e1;
           background: #f8fafc;
-          font-size: 0.82rem;
+          font-size: 0.78rem;
           font-weight: 700;
           color: #334155;
           cursor: pointer;
           transition: all 0.15s ease;
+          white-space: nowrap;
         }
         .btn-back-to-hub:hover {
           background: #f1f5f9;
@@ -1261,11 +1303,12 @@ export default function SimplePowerDialer({
         .breadcrumb-pill {
           display: flex;
           align-items: center;
-          gap: 0.4rem;
+          gap: 0.35rem;
           background: #f1f5f9;
-          padding: 0.35rem 0.75rem;
-          border-radius: 8px;
-          font-size: 0.82rem;
+          padding: 0.22rem 0.6rem;
+          border-radius: 6px;
+          font-size: 0.78rem;
+          white-space: nowrap;
         }
         .crumb-cat {
           font-weight: 700;
@@ -1278,54 +1321,57 @@ export default function SimplePowerDialer({
         .queue-quick-toggle {
           display: flex;
           align-items: center;
-          gap: 0.25rem;
+          gap: 0.2rem;
           background: #f8fafc;
           border: 1px solid #e2e8f0;
-          border-radius: 8px;
+          border-radius: 6px;
           padding: 2px;
         }
         .queue-sub-btn {
           border: none;
           background: transparent;
-          padding: 0.35rem 0.65rem;
-          border-radius: 6px;
-          font-size: 0.78rem;
+          padding: 0.22rem 0.55rem;
+          border-radius: 5px;
+          font-size: 0.75rem;
           font-weight: 600;
           color: #64748b;
           cursor: pointer;
+          white-space: nowrap;
         }
         .queue-sub-btn.active {
           background: #ffffff;
           color: #0b1d33;
           font-weight: 700;
-          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+          box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
         }
         .nav-center-progress {
           display: flex;
           align-items: center;
-          gap: 0.85rem;
+          gap: 0.65rem;
         }
         .lead-counter-text {
-          font-size: 0.82rem;
+          font-size: 0.78rem;
           color: #64748b;
+          white-space: nowrap;
         }
         .lead-nav-buttons {
           display: flex;
           align-items: center;
-          gap: 0.35rem;
+          gap: 0.3rem;
         }
         .btn-nav-step {
           display: flex;
           align-items: center;
-          gap: 0.35rem;
-          padding: 0.38rem 0.75rem;
+          gap: 0.3rem;
+          padding: 0.22rem 0.6rem;
           border-radius: 6px;
           border: 1px solid #cbd5e1;
           background: #ffffff;
-          font-size: 0.78rem;
+          font-size: 0.75rem;
           font-weight: 700;
           color: #334155;
           cursor: pointer;
+          white-space: nowrap;
         }
         .btn-nav-step:hover:not(:disabled) {
           background: #f1f5f9;
@@ -1339,64 +1385,80 @@ export default function SimplePowerDialer({
         .timers-and-target-strip {
           display: grid;
           grid-template-columns: repeat(4, 1fr);
-          gap: 0.85rem;
+          gap: 0.45rem;
+          flex-shrink: 0;
+          height: 48px;
+          box-sizing: border-box;
         }
         @media (max-width: 900px) {
           .timers-and-target-strip {
             grid-template-columns: repeat(2, 1fr);
+            height: auto;
           }
         }
         .timer-badge-box {
           background: #ffffff;
           border: 1px solid #e2e8f0;
-          border-radius: 12px;
-          padding: 0.75rem 1rem;
+          border-radius: 8px;
+          padding: 0.35rem 0.65rem;
           display: flex;
-          flex-direction: column;
-          gap: 0.25rem;
-          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+          align-items: center;
+          justify-content: space-between;
+          gap: 0.45rem;
+          box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+          box-sizing: border-box;
+          height: 100%;
         }
         .active-call-timer {
           background: #eff6ff;
           border-color: #bfdbfe;
         }
+        .timer-box-meta {
+          display: flex;
+          flex-direction: column;
+          gap: 0.15rem;
+        }
         .timer-box-label {
           display: flex;
           align-items: center;
-          gap: 0.35rem;
-          font-size: 0.72rem;
+          gap: 0.3rem;
+          font-size: 0.68rem;
           font-weight: 700;
           text-transform: uppercase;
-          letter-spacing: 0.04em;
+          letter-spacing: 0.03em;
           color: #64748b;
+          line-height: 1;
         }
         .timer-clock-digits {
           display: flex;
           align-items: center;
-          gap: 0.45rem;
-          font-size: 1.4rem;
+          gap: 0.35rem;
+          font-size: 1.25rem;
           font-weight: 800;
           color: #1e50bc;
           font-family: var(--font-mono, monospace);
+          line-height: 1;
         }
         .stat-digits {
-          font-size: 1.3rem;
+          font-size: 1.2rem;
           font-weight: 800;
           color: #0b1d33;
+          line-height: 1;
         }
         .micro-subtext {
-          font-size: 0.72rem;
+          font-size: 0.68rem;
           color: #64748b;
+          line-height: 1;
         }
         .timer-micro-actions {
           display: flex;
           align-items: center;
-          gap: 0.35rem;
-          margin-top: 0.15rem;
+          gap: 0.25rem;
+          margin-top: 0.1rem;
         }
         .btn-mini-timer {
-          width: 22px;
-          height: 22px;
+          width: 20px;
+          height: 20px;
           border-radius: 4px;
           border: 1px solid #bfdbfe;
           background: #ffffff;
@@ -1405,6 +1467,7 @@ export default function SimplePowerDialer({
           align-items: center;
           justify-content: center;
           cursor: pointer;
+          padding: 0;
         }
         .btn-mini-timer:hover {
           background: #dbeafe;
@@ -1418,30 +1481,47 @@ export default function SimplePowerDialer({
           border-color: #cbd5e1;
           background: #f8fafc;
         }
+        .target-box-inner {
+          width: 100%;
+          display: flex;
+          flex-direction: column;
+          gap: 0.2rem;
+        }
         .target-box-header {
           display: flex;
           align-items: center;
           justify-content: space-between;
         }
+        .target-box-label {
+          display: flex;
+          align-items: center;
+          gap: 0.3rem;
+          font-size: 0.68rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+          color: #64748b;
+          line-height: 1;
+        }
         .btn-edit-target {
           display: flex;
           align-items: center;
-          gap: 0.25rem;
+          gap: 0.2rem;
           border: none;
           background: transparent;
           color: #1e50bc;
-          font-size: 0.72rem;
+          font-size: 0.68rem;
           font-weight: 700;
           cursor: pointer;
+          padding: 0;
         }
         .target-dual-progress {
           display: flex;
           flex-direction: column;
-          gap: 0.3rem;
-          margin-top: 0.2rem;
+          gap: 0.2rem;
         }
         .target-progress-bar-track {
-          height: 6px;
+          height: 5px;
           background: #e2e8f0;
           border-radius: 999px;
           overflow: hidden;
@@ -1455,15 +1535,17 @@ export default function SimplePowerDialer({
           display: flex;
           align-items: center;
           justify-content: space-between;
-          font-size: 0.73rem;
+          font-size: 0.68rem;
           color: #64748b;
+          line-height: 1;
         }
 
         .sheet-progress-strip {
-          height: 4px;
+          height: 3px;
           background: #e2e8f0;
           border-radius: 999px;
           overflow: hidden;
+          flex-shrink: 0;
         }
         .sheet-progress-fill {
           height: 100%;
@@ -1475,43 +1557,59 @@ export default function SimplePowerDialer({
         .client-contact-banner {
           background: #ffffff;
           border: 1px solid #e2e8f0;
-          border-radius: 14px;
-          padding: 1.15rem 1.35rem;
+          border-radius: 8px;
+          padding: 0.35rem 0.75rem;
           display: flex;
           align-items: center;
           justify-content: space-between;
-          gap: 1rem;
-          box-shadow: 0 1px 4px rgba(0, 0, 0, 0.02);
-          flex-wrap: wrap;
+          gap: 0.65rem;
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+          flex-shrink: 0;
+          min-height: 42px;
+          box-sizing: border-box;
+        }
+        .contact-main-info {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          overflow: hidden;
+          min-width: 0;
         }
         .contact-title-row {
           display: flex;
           align-items: center;
-          gap: 0.65rem;
-          flex-wrap: wrap;
+          gap: 0.5rem;
+          flex-wrap: nowrap;
+          overflow: hidden;
+          white-space: nowrap;
         }
         .contact-seq-pill {
-          font-size: 0.72rem;
+          font-size: 0.7rem;
           font-weight: 800;
           background: #f1f5f9;
           color: #64748b;
-          padding: 0.15rem 0.5rem;
-          border-radius: 6px;
+          padding: 0.12rem 0.45rem;
+          border-radius: 5px;
+          flex-shrink: 0;
         }
         .contact-business-name {
-          font-size: 1.3rem;
+          font-size: 1.05rem;
           font-weight: 800;
           color: #0b1d33;
           margin: 0;
           letter-spacing: -0.01em;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
         .status-pill {
-          font-size: 0.72rem;
+          font-size: 0.68rem;
           font-weight: 700;
-          padding: 0.15rem 0.55rem;
-          border-radius: 6px;
+          padding: 0.12rem 0.45rem;
+          border-radius: 5px;
           background: #f1f5f9;
           color: #475569;
+          flex-shrink: 0;
         }
         .status-new {
           background: #eff6ff;
@@ -1525,36 +1623,32 @@ export default function SimplePowerDialer({
           background: #fef3c7;
           color: #b45309;
         }
-        .contact-meta-row {
-          display: flex;
+        .contact-inline-meta {
+          display: inline-flex;
           align-items: center;
-          gap: 0.85rem;
-          margin-top: 0.35rem;
-          font-size: 0.82rem;
+          gap: 0.25rem;
+          font-size: 0.78rem;
           color: #64748b;
-          flex-wrap: wrap;
-        }
-        .meta-item {
-          display: flex;
-          align-items: center;
-          gap: 0.35rem;
+          flex-shrink: 0;
+          padding-left: 0.35rem;
+          border-left: 1px solid #e2e8f0;
         }
         .contact-action-buttons {
           display: flex;
           align-items: center;
-          gap: 0.65rem;
-          flex-wrap: wrap;
+          gap: 0.5rem;
+          flex-shrink: 0;
         }
         .phone-number-pill {
           display: flex;
           align-items: center;
-          gap: 0.4rem;
+          gap: 0.35rem;
           background: #f8fafc;
           border: 1px solid #cbd5e1;
-          padding: 0.45rem 0.85rem;
-          border-radius: 9px;
+          padding: 0.28rem 0.65rem;
+          border-radius: 7px;
           font-weight: 700;
-          font-size: 0.92rem;
+          font-size: 0.84rem;
           color: #0b1d33;
         }
         .btn-copy-num {
@@ -1562,20 +1656,24 @@ export default function SimplePowerDialer({
           background: transparent;
           color: #64748b;
           cursor: pointer;
+          padding: 0;
+          display: flex;
+          align-items: center;
         }
         .btn-action-call {
           display: flex;
           align-items: center;
-          gap: 0.45rem;
+          gap: 0.35rem;
           background: #1e50bc;
           color: #ffffff;
-          padding: 0.55rem 1.15rem;
-          border-radius: 9px;
-          font-size: 0.88rem;
+          padding: 0.32rem 0.85rem;
+          border-radius: 7px;
+          font-size: 0.82rem;
           font-weight: 700;
           text-decoration: none;
-          box-shadow: 0 2px 6px rgba(30, 80, 188, 0.25);
+          box-shadow: 0 1px 4px rgba(30, 80, 188, 0.25);
           transition: all 0.15s ease;
+          white-space: nowrap;
         }
         .btn-action-call:hover {
           background: #18429c;
@@ -1584,16 +1682,18 @@ export default function SimplePowerDialer({
         .btn-action-whatsapp {
           display: flex;
           align-items: center;
-          gap: 0.45rem;
+          gap: 0.35rem;
           background: #25d366;
           color: #ffffff;
-          padding: 0.55rem 1.15rem;
-          border-radius: 9px;
-          font-size: 0.88rem;
+          padding: 0.32rem 0.85rem;
+          border-radius: 7px;
+          font-size: 0.82rem;
           font-weight: 700;
           text-decoration: none;
-          box-shadow: 0 2px 6px rgba(37, 211, 102, 0.25);
+          box-shadow: 0 1px 4px rgba(37, 211, 102, 0.25);
           transition: all 0.15s ease;
+          white-space: nowrap;
+          cursor: pointer;
         }
         .btn-action-whatsapp:hover {
           background: #1ebd59;
@@ -1603,44 +1703,64 @@ export default function SimplePowerDialer({
         /* ========================================================= */
         /* THE THREE PILLARS GRID                                    */
         /* ========================================================= */
+        .calling-workspace-body {
+          flex: 1;
+          min-height: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 0.35rem;
+          overflow: hidden;
+          box-sizing: border-box;
+        }
         .three-pillars-grid {
+          flex: 1;
+          min-height: 0;
           display: grid;
           grid-template-columns: 1fr 1fr 1fr;
-          gap: 1.15rem;
+          gap: 0.5rem;
+          overflow: hidden;
           align-items: stretch;
+          box-sizing: border-box;
         }
         @media (max-width: 1050px) {
           .three-pillars-grid {
             grid-template-columns: 1fr;
+            overflow-y: auto;
           }
         }
         .pillar-card {
           background: #ffffff;
           border: 1px solid #e2e8f0;
-          border-radius: 16px;
+          border-radius: 10px;
           display: flex;
           flex-direction: column;
+          min-height: 0;
+          height: 100%;
           overflow: hidden;
-          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+          box-sizing: border-box;
         }
         .pillar-header {
-          padding: 0.95rem 1.15rem;
+          padding: 0.35rem 0.75rem;
           background: #f8fafc;
           border-bottom: 1px solid #e2e8f0;
           display: flex;
           align-items: center;
           justify-content: space-between;
-          gap: 0.5rem;
+          gap: 0.4rem;
+          flex-shrink: 0;
+          min-height: 36px;
+          box-sizing: border-box;
         }
         .pillar-header-left {
           display: flex;
           align-items: center;
-          gap: 0.65rem;
+          gap: 0.5rem;
         }
         .pillar-icon-badge {
-          width: 32px;
-          height: 32px;
-          border-radius: 8px;
+          width: 26px;
+          height: 26px;
+          border-radius: 6px;
           display: flex;
           align-items: center;
           justify-content: center;
@@ -1658,38 +1778,44 @@ export default function SimplePowerDialer({
           color: #6d28d9;
         }
         .pillar-title {
-          font-size: 0.95rem;
+          font-size: 0.88rem;
           font-weight: 800;
           color: #0b1d33;
           margin: 0;
+          line-height: 1.1;
         }
         .pillar-subtitle {
-          font-size: 0.72rem;
+          font-size: 0.68rem;
           color: #64748b;
+          line-height: 1;
         }
         .pillar-content {
-          padding: 1.15rem;
+          padding: 0.5rem 0.65rem;
           display: flex;
           flex-direction: column;
-          gap: 0.95rem;
+          gap: 0.45rem;
           flex: 1;
+          min-height: 0;
+          overflow-y: auto;
+          box-sizing: border-box;
+          scrollbar-width: thin;
         }
 
         /* PILLAR 1: SCRIPT */
         .script-tab-pills {
           display: flex;
           align-items: center;
-          gap: 0.25rem;
+          gap: 0.2rem;
           background: #ffffff;
           border: 1px solid #e2e8f0;
-          border-radius: 6px;
+          border-radius: 5px;
           padding: 2px;
         }
         .script-pill {
           border: none;
           background: transparent;
-          padding: 0.25rem 0.55rem;
-          font-size: 0.72rem;
+          padding: 0.2rem 0.45rem;
+          font-size: 0.68rem;
           font-weight: 700;
           color: #64748b;
           border-radius: 4px;
@@ -1700,53 +1826,53 @@ export default function SimplePowerDialer({
           color: #ffffff;
         }
         .script-scrollable-content {
-          max-height: 480px;
           overflow-y: auto;
+          scrollbar-width: thin;
         }
         .script-quote-box {
           background: #f5f3ff;
-          border-left: 4px solid #7c3aed;
-          padding: 0.95rem;
-          border-radius: 0 10px 10px 0;
+          border-left: 3px solid #7c3aed;
+          padding: 0.6rem 0.75rem;
+          border-radius: 0 8px 8px 0;
         }
         .opening-script-text {
-          font-size: 0.88rem;
-          line-height: 1.55;
+          font-size: 0.82rem;
+          line-height: 1.45;
           color: #3b0764;
           margin: 0;
           font-style: italic;
         }
         .stages-header-label {
-          font-size: 0.75rem;
+          font-size: 0.7rem;
           font-weight: 700;
           text-transform: uppercase;
-          letter-spacing: 0.04em;
+          letter-spacing: 0.03em;
           color: #64748b;
           display: block;
-          margin-bottom: 0.45rem;
+          margin-bottom: 0.35rem;
         }
         .pitch-stages-list {
           display: flex;
           flex-direction: column;
-          gap: 0.5rem;
-          margin-top: 0.5rem;
+          gap: 0.35rem;
+          margin-top: 0.35rem;
         }
         .stage-item {
           display: flex;
           align-items: flex-start;
-          gap: 0.55rem;
+          gap: 0.45rem;
           background: #f8fafc;
-          padding: 0.55rem 0.75rem;
-          border-radius: 8px;
+          padding: 0.4rem 0.6rem;
+          border-radius: 6px;
           border: 1px solid #f1f5f9;
         }
         .stage-index-pill {
-          width: 20px;
-          height: 20px;
+          width: 18px;
+          height: 18px;
           border-radius: 999px;
           background: #e2e8f0;
           color: #334155;
-          font-size: 0.7rem;
+          font-size: 0.66rem;
           font-weight: 800;
           display: flex;
           align-items: center;
@@ -1756,30 +1882,30 @@ export default function SimplePowerDialer({
         .stage-text {
           display: flex;
           flex-direction: column;
-          gap: 0.15rem;
+          gap: 0.1rem;
         }
         .stage-name {
-          font-size: 0.82rem;
+          font-size: 0.78rem;
           font-weight: 700;
           color: #0b1d33;
         }
         .stage-desc {
-          font-size: 0.75rem;
+          font-size: 0.7rem;
           color: #64748b;
         }
         .objection-selector-chips {
           display: flex;
           align-items: center;
-          gap: 0.35rem;
+          gap: 0.25rem;
           flex-wrap: wrap;
-          margin-bottom: 0.75rem;
+          margin-bottom: 0.5rem;
         }
         .objection-chip {
-          padding: 0.3rem 0.6rem;
-          border-radius: 6px;
+          padding: 0.22rem 0.5rem;
+          border-radius: 5px;
           border: 1px solid #cbd5e1;
           background: #ffffff;
-          font-size: 0.75rem;
+          font-size: 0.7rem;
           font-weight: 600;
           color: #334155;
           cursor: pointer;
@@ -1792,56 +1918,56 @@ export default function SimplePowerDialer({
         .objection-reply-card {
           background: #fffbeb;
           border: 1px solid #fde68a;
-          border-radius: 10px;
-          padding: 0.95rem;
+          border-radius: 8px;
+          padding: 0.65rem;
           display: flex;
           flex-direction: column;
-          gap: 0.55rem;
+          gap: 0.4rem;
         }
         .obj-question {
           display: flex;
           align-items: center;
-          gap: 0.45rem;
-          font-size: 0.84rem;
+          gap: 0.35rem;
+          font-size: 0.78rem;
           font-weight: 700;
           color: #92400e;
         }
         .obj-reply {
           display: flex;
           flex-direction: column;
-          gap: 0.2rem;
+          gap: 0.15rem;
         }
         .reply-label {
-          font-size: 0.72rem;
+          font-size: 0.68rem;
           font-weight: 700;
           text-transform: uppercase;
           color: #b45309;
         }
         .obj-reply p {
-          font-size: 0.85rem;
-          line-height: 1.5;
+          font-size: 0.8rem;
+          line-height: 1.45;
           color: #451a03;
           margin: 0;
         }
         .questions-list {
           display: flex;
           flex-direction: column;
-          gap: 0.55rem;
+          gap: 0.4rem;
         }
         .question-bubble {
           display: flex;
           align-items: flex-start;
-          gap: 0.55rem;
+          gap: 0.45rem;
           background: #eff6ff;
           border: 1px solid #bfdbfe;
-          padding: 0.65rem 0.85rem;
-          border-radius: 8px;
+          padding: 0.5rem 0.65rem;
+          border-radius: 6px;
         }
         .question-bubble p {
-          font-size: 0.82rem;
+          font-size: 0.78rem;
           color: #1e3a8a;
           margin: 0;
-          line-height: 1.45;
+          line-height: 1.4;
           font-weight: 600;
         }
 
@@ -1849,28 +1975,30 @@ export default function SimplePowerDialer({
         .notes-content-layout {
           display: flex;
           flex-direction: column;
-          gap: 0.75rem;
+          gap: 0.45rem;
         }
         .form-group-field {
           display: flex;
           flex-direction: column;
-          gap: 0.35rem;
+          gap: 0.2rem;
         }
         .field-label {
-          font-size: 0.75rem;
+          font-size: 0.7rem;
           font-weight: 700;
           color: #475569;
           text-transform: uppercase;
           letter-spacing: 0.03em;
         }
         .requirement-input {
-          padding: 0.55rem 0.75rem;
+          padding: 0.32rem 0.6rem;
           border: 1px solid #cbd5e1;
-          border-radius: 8px;
-          font-size: 0.85rem;
+          border-radius: 6px;
+          font-size: 0.8rem;
           background: #ffffff;
           outline: none;
           color: #0b1d33;
+          height: 30px;
+          box-sizing: border-box;
         }
         .requirement-input:focus {
           border-color: #1e50bc;
@@ -1880,16 +2008,18 @@ export default function SimplePowerDialer({
         }
         .notes-textarea {
           width: 100%;
-          min-height: 100px;
-          padding: 0.65rem 0.75rem;
+          min-height: 70px;
+          max-height: 110px;
+          padding: 0.4rem 0.6rem;
           border: 1px solid #cbd5e1;
-          border-radius: 8px;
-          font-size: 0.85rem;
+          border-radius: 6px;
+          font-size: 0.8rem;
           background: #ffffff;
           outline: none;
-          resize: vertical;
+          resize: none;
           color: #0b1d33;
-          line-height: 1.45;
+          line-height: 1.4;
+          box-sizing: border-box;
         }
         .notes-textarea:focus {
           border-color: #1e50bc;
@@ -1897,16 +2027,16 @@ export default function SimplePowerDialer({
         .quick-note-chips-row {
           display: flex;
           align-items: center;
-          gap: 0.35rem;
+          gap: 0.25rem;
           flex-wrap: wrap;
         }
         .note-chip-btn {
-          font-size: 0.72rem;
+          font-size: 0.68rem;
           font-weight: 600;
           background: #f8fafc;
           border: 1px solid #e2e8f0;
-          padding: 0.2rem 0.5rem;
-          border-radius: 6px;
+          padding: 0.16rem 0.45rem;
+          border-radius: 5px;
           color: #475569;
           cursor: pointer;
         }
@@ -1917,35 +2047,35 @@ export default function SimplePowerDialer({
         .call-history-timeline {
           background: #f8fafc;
           border: 1px solid #e2e8f0;
-          border-radius: 10px;
-          padding: 0.75rem;
-          margin-top: 0.35rem;
+          border-radius: 8px;
+          padding: 0.5rem;
+          margin-top: 0.2rem;
         }
         .history-header {
           display: flex;
           align-items: center;
-          gap: 0.4rem;
-          font-size: 0.74rem;
+          gap: 0.35rem;
+          font-size: 0.7rem;
           font-weight: 700;
           color: #64748b;
-          margin-bottom: 0.4rem;
+          margin-bottom: 0.3rem;
         }
         .history-items-list {
           display: flex;
           flex-direction: column;
-          gap: 0.4rem;
+          gap: 0.3rem;
         }
         .history-log-item {
           background: #ffffff;
           border: 1px solid #f1f5f9;
-          border-radius: 6px;
-          padding: 0.4rem 0.6rem;
+          border-radius: 5px;
+          padding: 0.3rem 0.5rem;
         }
         .log-badge-line {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          font-size: 0.72rem;
+          font-size: 0.68rem;
         }
         .log-result-tag {
           font-weight: 700;
@@ -1955,49 +2085,52 @@ export default function SimplePowerDialer({
           color: #94a3b8;
         }
         .log-note-text {
-          font-size: 0.75rem;
+          font-size: 0.72rem;
           color: #475569;
-          margin: 0.2rem 0 0 0;
+          margin: 0.15rem 0 0 0;
         }
 
         /* PILLAR 3: RESPONSE */
         .response-content-layout {
           display: flex;
           flex-direction: column;
-          gap: 0.85rem;
+          gap: 0.55rem;
         }
         .outcomes-button-grid {
           display: grid;
           grid-template-columns: 1fr 1fr;
-          gap: 0.65rem;
+          gap: 0.45rem;
         }
         .outcome-card-btn {
           display: flex;
           align-items: center;
-          gap: 0.65rem;
-          padding: 0.75rem 0.85rem;
-          border-radius: 10px;
+          gap: 0.5rem;
+          padding: 0.45rem 0.55rem;
+          border-radius: 8px;
           border: 1px solid #e2e8f0;
           background: #ffffff;
           cursor: pointer;
           transition: all 0.15s ease;
           text-align: left;
+          box-sizing: border-box;
+          min-height: 48px;
         }
         .outcome-card-btn:hover {
           transform: translateY(-1px);
-          box-shadow: 0 3px 8px rgba(0, 0, 0, 0.04);
+          box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
         }
         .outcome-label-wrap {
           display: flex;
           flex-direction: column;
+          line-height: 1.15;
         }
         .outcome-name {
-          font-size: 0.86rem;
+          font-size: 0.8rem;
           font-weight: 800;
           color: #0b1d33;
         }
         .outcome-desc {
-          font-size: 0.68rem;
+          font-size: 0.65rem;
           color: #64748b;
         }
         .outcome-interested {
@@ -2052,14 +2185,14 @@ export default function SimplePowerDialer({
         .callback-presets-card, .deal-won-presets-card {
           background: #f8fafc;
           border: 1px solid #cbd5e1;
-          border-radius: 10px;
-          padding: 0.85rem;
+          border-radius: 8px;
+          padding: 0.55rem;
           display: flex;
           flex-direction: column;
-          gap: 0.55rem;
+          gap: 0.4rem;
         }
         .preset-card-title {
-          font-size: 0.74rem;
+          font-size: 0.7rem;
           font-weight: 700;
           color: #475569;
           text-transform: uppercase;
@@ -2067,14 +2200,14 @@ export default function SimplePowerDialer({
         .preset-buttons-row {
           display: flex;
           align-items: center;
-          gap: 0.35rem;
+          gap: 0.25rem;
           flex-wrap: wrap;
         }
         .preset-btn {
-          font-size: 0.75rem;
+          font-size: 0.72rem;
           font-weight: 600;
-          padding: 0.35rem 0.65rem;
-          border-radius: 6px;
+          padding: 0.25rem 0.5rem;
+          border-radius: 5px;
           border: 1px solid #cbd5e1;
           background: #ffffff;
           color: #1e50bc;
@@ -2088,45 +2221,45 @@ export default function SimplePowerDialer({
         .custom-datetime-row, .custom-deal-row {
           display: flex;
           align-items: center;
-          gap: 0.45rem;
+          gap: 0.35rem;
         }
         .date-input-sm, .time-input-sm, .deal-input-sm {
-          padding: 0.4rem 0.6rem;
+          padding: 0.3rem 0.5rem;
           border: 1px solid #cbd5e1;
-          border-radius: 6px;
-          font-size: 0.8rem;
+          border-radius: 5px;
+          font-size: 0.75rem;
           background: #ffffff;
         }
         .btn-confirm-callback, .btn-confirm-deal {
-          padding: 0.45rem 0.85rem;
-          border-radius: 6px;
+          padding: 0.35rem 0.7rem;
+          border-radius: 5px;
           border: none;
           background: #1e50bc;
           color: #ffffff;
-          font-size: 0.78rem;
+          font-size: 0.75rem;
           font-weight: 700;
           cursor: pointer;
         }
 
         .save-response-footer {
           margin-top: auto;
-          padding-top: 0.5rem;
+          padding-top: 0.35rem;
         }
         .btn-save-and-advance {
           width: 100%;
           display: flex;
           align-items: center;
           justify-content: center;
-          gap: 0.5rem;
-          padding: 0.85rem 1rem;
-          border-radius: 10px;
+          gap: 0.4rem;
+          padding: 0.5rem 0.85rem;
+          border-radius: 8px;
           border: none;
           background: #1e50bc;
           color: #ffffff;
-          font-size: 0.95rem;
+          font-size: 0.86rem;
           font-weight: 800;
           cursor: pointer;
-          box-shadow: 0 4px 12px rgba(30, 80, 188, 0.25);
+          box-shadow: 0 2px 6px rgba(30, 80, 188, 0.25);
           transition: all 0.15s ease;
         }
         .btn-save-and-advance:hover {
@@ -2138,21 +2271,21 @@ export default function SimplePowerDialer({
         .empty-calling-card {
           background: #ffffff;
           border: 2px dashed #cbd5e1;
-          border-radius: 20px;
-          padding: 3.5rem 2rem;
+          border-radius: 16px;
+          padding: 2.5rem 1.5rem;
           text-align: center;
           display: flex;
           flex-direction: column;
           align-items: center;
-          gap: 0.85rem;
+          gap: 0.65rem;
         }
         .empty-calling-card h2 {
-          font-size: 1.35rem;
+          font-size: 1.25rem;
           font-weight: 800;
           margin: 0;
         }
         .empty-calling-card p {
-          font-size: 0.9rem;
+          font-size: 0.85rem;
           color: #64748b;
           max-width: 440px;
           margin: 0;
@@ -2160,26 +2293,26 @@ export default function SimplePowerDialer({
         .empty-actions-row {
           display: flex;
           align-items: center;
-          gap: 0.75rem;
-          margin-top: 0.5rem;
+          gap: 0.65rem;
+          margin-top: 0.4rem;
         }
         .btn-switch-queue-all {
-          padding: 0.65rem 1.15rem;
+          padding: 0.55rem 1rem;
           background: #1e50bc;
           color: #ffffff;
           border-radius: 8px;
           border: none;
-          font-size: 0.85rem;
+          font-size: 0.82rem;
           font-weight: 700;
           cursor: pointer;
         }
         .btn-return-hub {
-          padding: 0.65rem 1.15rem;
+          padding: 0.55rem 1rem;
           background: #f1f5f9;
           color: #334155;
           border-radius: 8px;
           border: 1px solid #cbd5e1;
-          font-size: 0.85rem;
+          font-size: 0.82rem;
           font-weight: 700;
           cursor: pointer;
         }

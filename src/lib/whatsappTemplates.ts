@@ -28,11 +28,9 @@ export const QUICK_WA_TEMPLATES: QuickWATemplate[] = [
     title: 'Brochure & Introduction',
     badge: 'Brochure',
     iconName: 'brochure',
-    generateText: (lead, brochureUrl) => {
-      const name = lead.ownerName || lead.businessName || 'there';
-      const config = getStoredBrochureConfig();
-      const bUrl = brochureUrl || config.brochureUrl || 'https://intellicor.in/portfolio';
-      return `Hi ${name}, here is the company introduction and brochure link: ${bUrl} as requested. Please take a look and let me know if you have any questions!`;
+    generateText: (lead) => {
+      const business = lead.businessName || lead.ownerName || 'your business';
+      return `Hi,\n\nGreetings from *Intellicor Technologies!*\n\nI've shared our brochure highlighting our services in *Website Development, Social Media Marketing, and Google Business Profile Optimization.*\n\nWe'd love to help ${business} strengthen its online presence and generate more property inquiries.\n\n🌐 https://intellicortechnologies.com  \n📧 aman@intellicortechnologies.com\n\nWould you be available for a quick 10-minute discussion this week?\n\nBest regards,  \n*Team Intellicor Technologies*`;
     },
   },
   {

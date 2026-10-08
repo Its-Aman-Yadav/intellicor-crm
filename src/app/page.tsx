@@ -624,7 +624,7 @@ export default function CRMApp() {
   // ==========================================
   if (appMode === 'simple') {
     return (
-      <div className="simple-app-shell">
+      <div className={`simple-app-shell ${simpleTab === 'call_queue' ? 'dialer-active' : ''}`}>
         {/* TOP BAR: Clean, distraction-free header */}
         <header className="simple-header">
           <div className="simple-header-inner">
@@ -752,7 +752,7 @@ export default function CRMApp() {
         </header>
 
         {/* MAIN BODY CONTENT */}
-        <main className="simple-main-container">
+        <main className={`simple-main-container ${simpleTab === 'call_queue' ? 'dialer-screen-container' : ''}`}>
           {simpleTab === 'dashboard' && (
             <DailyDashboard
               leads={leads}
@@ -862,6 +862,11 @@ export default function CRMApp() {
             display: flex;
             flex-direction: column;
             color: #0b1d33;
+          }
+          .simple-app-shell.dialer-active {
+            height: 100vh;
+            max-height: 100vh;
+            overflow: hidden;
           }
           .simple-header {
             background: #ffffff;
@@ -1141,6 +1146,15 @@ export default function CRMApp() {
             margin: 0 auto;
             padding: 1.5rem 1.25rem 3rem;
             flex: 1;
+          }
+          .simple-main-container.dialer-screen-container {
+            padding: 0.35rem 1rem 0.4rem;
+            height: calc(100vh - 60px);
+            max-height: calc(100vh - 60px);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            box-sizing: border-box;
           }
 
           /* Responsive adjustments */
