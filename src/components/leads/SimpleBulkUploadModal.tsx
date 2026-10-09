@@ -477,38 +477,39 @@ export default function SimpleBulkUploadModal({
                 /* Drag & Drop Zone */
                 <>
                   <input
+                    id="bulk-file-upload"
                     type="file"
                     ref={fileInputRef}
                     onChange={handleFileChange}
                     accept=".xlsx,.xls,.csv,.tsv"
                     style={{ display: 'none' }}
                   />
-                  <div
+                  <label
+                    htmlFor="bulk-file-upload"
                     className={`upload-dropzone ${isDragging ? 'is-dragging' : ''}`}
                     onDragOver={handleDragOver}
                     onDragLeave={handleDragLeave}
                     onDrop={handleDrop}
-                    onClick={() => fileInputRef.current?.click()}
                   >
-                  <div className="dropzone-icon-circle">
-                    {isLoading ? (
-                      <div className="simple-spinner" />
-                    ) : (
-                      <FileSpreadsheet size={36} />
-                    )}
-                  </div>
-                  <h3 className="dropzone-heading">
-                    {isLoading
-                      ? 'Reading spreadsheet...'
-                      : 'Choose your Excel (.xlsx, .xls) or CSV file'}
-                  </h3>
-                  <p className="dropzone-sub">
-                    Tap to choose file, or drag and drop spreadsheet here
-                  </p>
-                  <span className="file-types-tag">
-                    Supports .xlsx, .xls, .csv, and tab-separated sheets
-                  </span>
-                </div>
+                    <div className="dropzone-icon-circle">
+                      {isLoading ? (
+                        <div className="simple-spinner" />
+                      ) : (
+                        <FileSpreadsheet size={36} />
+                      )}
+                    </div>
+                    <h3 className="dropzone-heading">
+                      {isLoading
+                        ? 'Reading spreadsheet...'
+                        : 'Choose your Excel (.xlsx, .xls) or CSV file'}
+                    </h3>
+                    <p className="dropzone-sub">
+                      Tap to choose file, or drag and drop spreadsheet here
+                    </p>
+                    <span className="file-types-tag">
+                      Supports .xlsx, .xls, .csv, and tab-separated sheets
+                    </span>
+                  </label>
                 </>
               ) : (
                 /* Paste Box */
