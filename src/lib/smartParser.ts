@@ -140,7 +140,12 @@ export function detectColumnTypes(matrix: string[][]): SmartParseResult {
     return { hasHeader: false, mappings: [], analysis: [] };
   }
 
-  const numCols = Math.max(...matrix.map((r) => r.length));
+  let numCols = 1;
+  for (const r of matrix) {
+    if (r.length > numCols) {
+      numCols = r.length;
+    }
+  }
   const firstRow = matrix[0] || [];
 
   // 1. Check if first row is a header row

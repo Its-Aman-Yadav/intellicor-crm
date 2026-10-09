@@ -155,7 +155,13 @@ export default function SimpleBulkUploadModal({
     if (file) {
       handleFileProcess(file);
     }
-    e.target.value = '';
+  };
+
+  const handleDropzoneClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+      fileInputRef.current.click();
+    }
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -314,6 +320,9 @@ export default function SimpleBulkUploadModal({
   };
 
   const handleReset = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
     setParsedData(null);
     setFileName('');
     setSheetName('');
@@ -476,13 +485,14 @@ export default function SimpleBulkUploadModal({
                   onDragOver={handleDragOver}
                   onDragLeave={handleDragLeave}
                   onDrop={handleDrop}
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={handleDropzoneClick}
                 >
                   <input
                     type="file"
                     ref={fileInputRef}
                     onChange={handleFileChange}
-                    accept=".xlsx,.xls,.csv,.tsv"
+                    onClick={(e) => e.stopPropagation()}
+                    accept=".xlsx,.xls,.csv,.tsv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
                     style={{ display: 'none' }}
                   />
                   <div className="dropzone-icon-circle">

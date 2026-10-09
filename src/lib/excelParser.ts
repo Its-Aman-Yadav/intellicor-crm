@@ -36,10 +36,12 @@ export interface ParsedSheetResult {
  * and empty trailing cells aren't truncated.
  */
 function normalizeRawRows(rawRows: unknown[][]): string[][] {
-  const maxCols = Math.max(
-    ...rawRows.map((r) => (Array.isArray(r) ? r.length : 0)),
-    1
-  );
+  let maxCols = 1;
+  for (const row of rawRows) {
+    if (Array.isArray(row) && row.length > maxCols) {
+      maxCols = row.length;
+    }
+  }
 
   return rawRows
     .map((row) => {
@@ -63,13 +65,14 @@ function normalizeRawRows(rawRows: unknown[][]): string[][] {
  * Many spreadsheet generators/exporters write an outdated or truncated `dimension`
  * tag (e.g. A1:N100 = 14 columns) even when there are 30+ columns (O, P, Q ... AD).
  * SheetJS's sheet_to_json strictly bounds its iteration to `!ref`, which drops
- * all columns beyond column 14. This function scans all cell coordinates and properties
+ * all columns beyond column 14. This function scans actual cell coordinates and properties
  * to dynamically expand !ref so 100% of the columns are read.
  */
 export function ensureFullWorksheetRange(worksheet: XLSX.WorkSheet): void {
   if (!worksheet) return;
 
   try {
+    let hasExistingRef = false;
     let minC = 0;
     let minR = 0;
     let maxC = 0;
@@ -79,80 +82,85 @@ export function ensureFullWorksheetRange(worksheet: XLSX.WorkSheet): void {
     if (worksheet['!ref']) {
       try {
         const decoded = XLSX.utils.decode_range(worksheet['!ref']);
-        if (decoded.s.c >= 0) minC = decoded.s.c;
-        if (decoded.s.r >= 0) minR = decoded.s.r;
-        if (decoded.e.c >= 0) maxC = Math.max(maxC, decoded.e.c);
-        if (decoded.e.r >= 0) maxR = Math.max(maxR, decoded.e.r);
+        if (
+          decoded.s.c >= 0 &&
+          decoded.s.r >= 0 &&
+          decoded.e.c >= decoded.s.c &&
+          decoded.e.r >= decoded.s.r
+        ) {
+          minC = decoded.s.c;
+          minR = decoded.s.r;
+          maxC = decoded.e.c;
+          maxR = decoded.e.r;
+          hasExistingRef = true;
+        }
       } catch {
         // ignore malformed !ref
       }
     }
 
-    // 2. Check '!fullref' property if present
-    const fullref = (worksheet as Record<string, unknown>)['!fullref'];
-    if (typeof fullref === 'string') {
-      try {
-        const decoded = XLSX.utils.decode_range(fullref);
-        if (decoded.e.c >= 0) maxC = Math.max(maxC, decoded.e.c);
-        if (decoded.e.r >= 0) maxR = Math.max(maxR, decoded.e.r);
-      } catch {
-        // ignore
-      }
-    }
-
-    // 3. Check column formatting array '!cols' length if present
-    const cols = (worksheet as Record<string, unknown>)['!cols'];
-    if (Array.isArray(cols) && cols.length > 0) {
-      maxC = Math.max(maxC, cols.length - 1);
-    }
-
-    // 4. Check autofilter range if present
-    const autofilter = (worksheet as Record<string, unknown>)['!autofilter'] as { ref?: string } | undefined;
-    if (autofilter && typeof autofilter.ref === 'string') {
-      try {
-        const decoded = XLSX.utils.decode_range(autofilter.ref);
-        if (decoded.e.c >= 0) maxC = Math.max(maxC, decoded.e.c);
-        if (decoded.e.r >= 0) maxR = Math.max(maxR, decoded.e.r);
-      } catch {
-        // ignore
-      }
-    }
-
-    // 5. Check dense mode array '!data' if present
-    const data = (worksheet as Record<string, unknown>)['!data'];
-    if (Array.isArray(data)) {
-      for (let r = 0; r < data.length; r++) {
-        if (Array.isArray(data[r])) {
-          for (let c = 0; c < data[r].length; c++) {
-            if (data[r][c] !== undefined && data[r][c] !== null) {
-              if (c > maxC) maxC = c;
-              if (r > maxR) maxR = r;
-            }
-          }
-        }
-      }
-    }
-
-    // 6. Scan ALL cell keys in the worksheet object
+    // 2. Scan actual cell keys in the worksheet object
     // Real cell keys in Excel are 1-3 letters followed by numbers, e.g. 'A1', 'AD10'
     const cellRegex = /^[A-Za-z]+[1-9][0-9]*$/;
+    let foundAnyCell = false;
+
     for (const key of Object.keys(worksheet)) {
       if (key.charCodeAt(0) === 33) continue; // skip '!ref', '!cols', '!rows', '!merges', etc.
       if (!cellRegex.test(key)) continue; // ignore non-cell properties
       try {
         const cell = XLSX.utils.decode_cell(key);
         if (cell.c >= 0 && cell.r >= 0) {
-          if (cell.c > maxC) maxC = cell.c;
-          if (cell.r > maxR) maxR = cell.r;
-          if (cell.c < minC) minC = cell.c;
-          if (cell.r < minR) minR = cell.r;
+          if (!foundAnyCell && !hasExistingRef) {
+            minC = cell.c;
+            minR = cell.r;
+            maxC = cell.c;
+            maxR = cell.r;
+            foundAnyCell = true;
+          } else {
+            if (cell.c > maxC) maxC = cell.c;
+            if (cell.r > maxR) maxR = cell.r;
+            if (cell.c < minC) minC = cell.c;
+            if (cell.r < minR) minR = cell.r;
+            foundAnyCell = true;
+          }
         }
       } catch {
         // ignore
       }
     }
 
-    // 7. Update !ref safely, strictly guaranteeing non-negative start
+    // 3. Dense mode array '!data' if present
+    const data = (worksheet as Record<string, unknown>)['!data'];
+    if (Array.isArray(data)) {
+      for (let r = 0; r < data.length; r++) {
+        if (Array.isArray(data[r])) {
+          for (let c = 0; c < data[r].length; c++) {
+            if (data[r][c] !== undefined && data[r][c] !== null) {
+              if (!foundAnyCell && !hasExistingRef) {
+                minC = c;
+                minR = r;
+                maxC = c;
+                maxR = r;
+                foundAnyCell = true;
+              } else {
+                if (c > maxC) maxC = c;
+                if (r > maxR) maxR = r;
+                if (c < minC) minC = c;
+                if (r < minR) minR = r;
+                foundAnyCell = true;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // If worksheet is completely empty (no cells and no ref), leave it alone
+    if (!hasExistingRef && !foundAnyCell) {
+      return;
+    }
+
+    // Update !ref safely, strictly guaranteeing non-negative start
     minC = Math.max(0, minC);
     minR = Math.max(0, minR);
     maxC = Math.max(minC, maxC);
@@ -183,7 +191,12 @@ export function buildParsedSheetResult(params: {
     throw new Error('The selected sheet contains no readable data rows.');
   }
 
-  const numCols = Math.max(...matrix.map((r) => r.length), 1);
+  let numCols = 1;
+  for (const r of matrix) {
+    if (r.length > numCols) {
+      numCols = r.length;
+    }
+  }
 
   // Determine header row index
   let headerRowIndex: number;
@@ -300,19 +313,33 @@ export async function readSpreadsheetFile(
   options?: { selectedSheet?: string; headerRowIndex?: number }
 ): Promise<ParsedSheetResult> {
   const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: 'array' });
+  const workbook = XLSX.read(buffer, {
+    type: 'array',
+    cellDates: true,
+  });
   const availableSheets = workbook.SheetNames || ['Sheet1'];
 
-  // Expand bounds on ALL sheets in the workbook to prevent 14-column truncation
+  // Expand bounds on sheets in the workbook to prevent column truncation
   for (const sName of availableSheets) {
     if (workbook.Sheets[sName]) {
       ensureFullWorksheetRange(workbook.Sheets[sName]);
     }
   }
 
-  let chosenSheet = options?.selectedSheet || availableSheets[0] || 'Sheet1';
-  if (!availableSheets.includes(chosenSheet)) {
+  let chosenSheet = options?.selectedSheet;
+  if (!chosenSheet || !availableSheets.includes(chosenSheet)) {
+    // Pick the first sheet that actually has non-empty rows
     chosenSheet = availableSheets[0] || 'Sheet1';
+    for (const sName of availableSheets) {
+      const ws = workbook.Sheets[sName];
+      if (ws && ws['!ref']) {
+        const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', blankrows: false });
+        if (raw.length > 0) {
+          chosenSheet = sName;
+          break;
+        }
+      }
+    }
   }
 
   const worksheet = workbook.Sheets[chosenSheet];
@@ -334,7 +361,7 @@ export async function readSpreadsheetFile(
   const lowerFileName = file.name.toLowerCase();
   if (lowerFileName.endsWith('.csv') || lowerFileName.endsWith('.tsv') || lowerFileName.endsWith('.txt')) {
     try {
-      const rawText = await file.text();
+      const rawText = new TextDecoder('utf-8').decode(buffer);
       const textLines = rawText
         .split(/\r?\n/)
         .map((l) => l.trim())
@@ -533,11 +560,15 @@ export function convertMatrixToLeads(
       }
     });
 
-    // Skip empty lines without phone and business name
-    if (!phone && !businessName && !ownerName) return;
+    // Skip lines that have no content in any mapped column
+    const hasAnyMappedValue = row.some((cellVal, colIdx) => {
+      const field = mappings[colIdx] || 'skip';
+      return field !== 'skip' && Boolean(cellVal && cellVal.trim());
+    });
+    if (!hasAnyMappedValue) return;
 
     // Clean and validate phone number
-    const cleanedPhone = cleanPhoneNumber(phone || '0000000000');
+    const cleanedPhone = phone ? cleanPhoneNumber(phone) : '0000000000';
     const finalBusinessName = businessName || ownerName || `Client #${rowIdx + 1}`;
     const finalOwnerName = ownerName || (businessName !== finalBusinessName ? businessName : '');
 
