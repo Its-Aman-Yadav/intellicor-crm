@@ -155,6 +155,7 @@ export default function SimpleBulkUploadModal({
     if (file) {
       handleFileProcess(file);
     }
+    e.target.value = '';
   };
 
   const handleDragOver = (e: React.DragEvent) => {

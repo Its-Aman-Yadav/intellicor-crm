@@ -69,91 +69,101 @@ function normalizeRawRows(rawRows: unknown[][]): string[][] {
 export function ensureFullWorksheetRange(worksheet: XLSX.WorkSheet): void {
   if (!worksheet) return;
 
-  let minC = 0;
-  let minR = 0;
-  let maxC = -1;
-  let maxR = -1;
+  try {
+    let minC = 0;
+    let minR = 0;
+    let maxC = 0;
+    let maxR = 0;
 
-  // 1. Initial bounds from worksheet['!ref'] if available
-  if (worksheet['!ref']) {
-    try {
-      const decoded = XLSX.utils.decode_range(worksheet['!ref']);
-      minC = Math.min(minC, decoded.s.c);
-      minR = Math.min(minR, decoded.s.r);
-      maxC = Math.max(maxC, decoded.e.c);
-      maxR = Math.max(maxR, decoded.e.r);
-    } catch {
-      // ignore malformed !ref
+    // 1. Initial bounds from worksheet['!ref'] if available
+    if (worksheet['!ref']) {
+      try {
+        const decoded = XLSX.utils.decode_range(worksheet['!ref']);
+        if (decoded.s.c >= 0) minC = decoded.s.c;
+        if (decoded.s.r >= 0) minR = decoded.s.r;
+        if (decoded.e.c >= 0) maxC = Math.max(maxC, decoded.e.c);
+        if (decoded.e.r >= 0) maxR = Math.max(maxR, decoded.e.r);
+      } catch {
+        // ignore malformed !ref
+      }
     }
-  }
 
-  // 2. Check '!fullref' property if present
-  const fullref = (worksheet as Record<string, unknown>)['!fullref'];
-  if (typeof fullref === 'string') {
-    try {
-      const decoded = XLSX.utils.decode_range(fullref);
-      minC = Math.min(minC, decoded.s.c);
-      minR = Math.min(minR, decoded.s.r);
-      maxC = Math.max(maxC, decoded.e.c);
-      maxR = Math.max(maxR, decoded.e.r);
-    } catch {
-      // ignore
+    // 2. Check '!fullref' property if present
+    const fullref = (worksheet as Record<string, unknown>)['!fullref'];
+    if (typeof fullref === 'string') {
+      try {
+        const decoded = XLSX.utils.decode_range(fullref);
+        if (decoded.e.c >= 0) maxC = Math.max(maxC, decoded.e.c);
+        if (decoded.e.r >= 0) maxR = Math.max(maxR, decoded.e.r);
+      } catch {
+        // ignore
+      }
     }
-  }
 
-  // 3. Check column formatting array '!cols' length if present
-  const cols = (worksheet as Record<string, unknown>)['!cols'];
-  if (Array.isArray(cols) && cols.length > 0) {
-    maxC = Math.max(maxC, cols.length - 1);
-  }
-
-  // 4. Check autofilter range if present
-  const autofilter = (worksheet as Record<string, unknown>)['!autofilter'] as { ref?: string } | undefined;
-  if (autofilter && typeof autofilter.ref === 'string') {
-    try {
-      const decoded = XLSX.utils.decode_range(autofilter.ref);
-      maxC = Math.max(maxC, decoded.e.c);
-      maxR = Math.max(maxR, decoded.e.r);
-    } catch {
-      // ignore
+    // 3. Check column formatting array '!cols' length if present
+    const cols = (worksheet as Record<string, unknown>)['!cols'];
+    if (Array.isArray(cols) && cols.length > 0) {
+      maxC = Math.max(maxC, cols.length - 1);
     }
-  }
 
-  // 5. Check dense mode array '!data' if present
-  const data = (worksheet as Record<string, unknown>)['!data'];
-  if (Array.isArray(data)) {
-    for (let r = 0; r < data.length; r++) {
-      if (Array.isArray(data[r])) {
-        for (let c = 0; c < data[r].length; c++) {
-          if (data[r][c] !== undefined && data[r][c] !== null) {
-            if (c > maxC) maxC = c;
-            if (r > maxR) maxR = r;
+    // 4. Check autofilter range if present
+    const autofilter = (worksheet as Record<string, unknown>)['!autofilter'] as { ref?: string } | undefined;
+    if (autofilter && typeof autofilter.ref === 'string') {
+      try {
+        const decoded = XLSX.utils.decode_range(autofilter.ref);
+        if (decoded.e.c >= 0) maxC = Math.max(maxC, decoded.e.c);
+        if (decoded.e.r >= 0) maxR = Math.max(maxR, decoded.e.r);
+      } catch {
+        // ignore
+      }
+    }
+
+    // 5. Check dense mode array '!data' if present
+    const data = (worksheet as Record<string, unknown>)['!data'];
+    if (Array.isArray(data)) {
+      for (let r = 0; r < data.length; r++) {
+        if (Array.isArray(data[r])) {
+          for (let c = 0; c < data[r].length; c++) {
+            if (data[r][c] !== undefined && data[r][c] !== null) {
+              if (c > maxC) maxC = c;
+              if (r > maxR) maxR = r;
+            }
           }
         }
       }
     }
-  }
 
-  // 6. Scan ALL cell keys in the worksheet object (e.g. 'A1', 'AD10', etc.)
-  for (const key of Object.keys(worksheet)) {
-    if (key.charCodeAt(0) === 33) continue; // skip '!ref', '!cols', '!rows', '!merges', etc.
-    try {
-      const cell = XLSX.utils.decode_cell(key);
-      if (cell.c > maxC) maxC = cell.c;
-      if (cell.r > maxR) maxR = cell.r;
-      if (cell.c < minC) minC = cell.c;
-      if (cell.r < minR) minR = cell.r;
-    } catch {
-      // key was not a standard cell coordinate
+    // 6. Scan ALL cell keys in the worksheet object
+    // Real cell keys in Excel are 1-3 letters followed by numbers, e.g. 'A1', 'AD10'
+    const cellRegex = /^[A-Za-z]+[1-9][0-9]*$/;
+    for (const key of Object.keys(worksheet)) {
+      if (key.charCodeAt(0) === 33) continue; // skip '!ref', '!cols', '!rows', '!merges', etc.
+      if (!cellRegex.test(key)) continue; // ignore non-cell properties
+      try {
+        const cell = XLSX.utils.decode_cell(key);
+        if (cell.c >= 0 && cell.r >= 0) {
+          if (cell.c > maxC) maxC = cell.c;
+          if (cell.r > maxR) maxR = cell.r;
+          if (cell.c < minC) minC = cell.c;
+          if (cell.r < minR) minR = cell.r;
+        }
+      } catch {
+        // ignore
+      }
     }
-  }
 
-  // 7. Update !ref to encompass the true maximum dimensions
-  if (maxC >= 0 && maxR >= 0) {
+    // 7. Update !ref safely, strictly guaranteeing non-negative start
+    minC = Math.max(0, minC);
+    minR = Math.max(0, minR);
+    maxC = Math.max(minC, maxC);
+    maxR = Math.max(minR, maxR);
+
     worksheet['!ref'] = XLSX.utils.encode_range({
-      s: { c: minC === Infinity ? 0 : minC, r: minR === Infinity ? 0 : minR },
+      s: { c: minC, r: minR },
       e: { c: maxC, r: maxR },
     });
+  } catch (err) {
+    console.warn('ensureFullWorksheetRange notice:', err);
   }
 }
 
