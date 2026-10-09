@@ -49,6 +49,8 @@ interface SimpleBulkUploadModalProps {
   activeRep: string;
   initialCategory?: string;
   existingCategories?: string[];
+  initialFile?: File | null;
+  onClearInitialFile?: () => void;
 }
 
 export default function SimpleBulkUploadModal({
@@ -58,6 +60,8 @@ export default function SimpleBulkUploadModal({
   activeRep,
   initialCategory = 'Airbnb',
   existingCategories = ['Airbnb', 'Hotels', 'Manufacturing'],
+  initialFile,
+  onClearInitialFile,
 }: SimpleBulkUploadModalProps) {
   const [activeTab, setActiveTab] = useState<'upload' | 'paste'>('upload');
   const [pasteText, setPasteText] = useState('');
@@ -149,6 +153,16 @@ export default function SimpleBulkUploadModal({
       setIsLoading(false);
     }
   };
+
+  // Automatically process initialFile if passed
+  useEffect(() => {
+    if (isOpen && initialFile) {
+      handleFileProcess(initialFile);
+      if (onClearInitialFile) {
+        onClearInitialFile();
+      }
+    }
+  }, [isOpen, initialFile]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

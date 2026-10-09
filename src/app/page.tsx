@@ -98,6 +98,7 @@ export default function CRMApp() {
   const [selectedCallingSheet, setSelectedCallingSheet] = useState<string | undefined>();
   const [uploadCategory, setUploadCategory] = useState<string | undefined>();
   const [isSimpleUploadOpen, setIsSimpleUploadOpen] = useState(false);
+  const [initialFileForModal, setInitialFileForModal] = useState<File | null>(null);
   const [dailyTarget, setDailyTarget] = useState<UserDailyTarget>(DEFAULT_DAILY_TARGET);
   const [isTargetModalOpen, setIsTargetModalOpen] = useState(false);
 
@@ -575,7 +576,16 @@ export default function CRMApp() {
 
   const handleOpenUploadModal = (category?: string) => {
     setUploadCategory(category);
-    setIsSimpleUploadOpen(true);
+    fileInputRef.current?.click();
+  };
+
+  const handleGlobalFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setInitialFileForModal(file);
+      setIsSimpleUploadOpen(true);
+    }
+    e.target.value = '';
   };
 
   const handleSaveTarget = (newTarget: UserDailyTarget) => {
@@ -1297,12 +1307,12 @@ export default function CRMApp() {
             </button>
           </div>
 
-          {/* Hidden file input for CSV import */}
+          {/* Hidden file input for global upload */}
           <input
             type="file"
             ref={fileInputRef}
-            onChange={handleFileChange}
-            accept=".csv"
+            onChange={handleGlobalFileChange}
+            accept=".xlsx,.xls,.csv,.tsv"
             style={{ display: 'none' }}
           />
 
@@ -1445,11 +1455,16 @@ export default function CRMApp() {
       {/* MODAL 4: Simple Bulk Upload Modal */}
       <SimpleBulkUploadModal
         isOpen={isSimpleUploadOpen}
-        onClose={() => setIsSimpleUploadOpen(false)}
+        onClose={() => {
+          setIsSimpleUploadOpen(false);
+          setInitialFileForModal(null);
+        }}
         onImportLeads={handleBulkImportLeads}
         activeRep={activeRep}
         initialCategory={uploadCategory || 'Airbnb'}
         existingCategories={existingCategories}
+        initialFile={initialFileForModal}
+        onClearInitialFile={() => setInitialFileForModal(null)}
       />
 
       {/* MODAL 4.5: Daily Target Modal */}
