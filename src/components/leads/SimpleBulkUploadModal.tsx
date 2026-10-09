@@ -475,13 +475,7 @@ export default function SimpleBulkUploadModal({
 
               {activeTab === 'upload' ? (
                 /* Drag & Drop Zone */
-                <div
-                  className={`upload-dropzone ${isDragging ? 'is-dragging' : ''}`}
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
-                  onClick={() => fileInputRef.current?.click()}
-                >
+                <>
                   <input
                     type="file"
                     ref={fileInputRef}
@@ -489,6 +483,13 @@ export default function SimpleBulkUploadModal({
                     accept=".xlsx,.xls,.csv,.tsv"
                     style={{ display: 'none' }}
                   />
+                  <div
+                    className={`upload-dropzone ${isDragging ? 'is-dragging' : ''}`}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
                   <div className="dropzone-icon-circle">
                     {isLoading ? (
                       <div className="simple-spinner" />
@@ -508,6 +509,7 @@ export default function SimpleBulkUploadModal({
                     Supports .xlsx, .xls, .csv, and tab-separated sheets
                   </span>
                 </div>
+                </>
               ) : (
                 /* Paste Box */
                 <div className="paste-container">
