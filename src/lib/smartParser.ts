@@ -1,5 +1,3 @@
-import { cleanPhoneNumber } from './whatsapp';
-
 export type DetectedField =
   | 'businessName'
   | 'ownerName'
@@ -8,6 +6,7 @@ export type DetectedField =
   | 'industry'
   | 'website'
   | 'instagram'
+  | 'googleProfile'
   | 'notes'
   | 'skip';
 
@@ -21,6 +20,7 @@ export const DETECTED_FIELD_LABELS: Record<DetectedField, string> = {
   industry: '🏷️ Industry / Category',
   website: '🌐 Website URL',
   instagram: '📸 Instagram',
+  googleProfile: '🗺️ Google Maps / Profile',
 };
 
 export const COMMON_INDIAN_CITIES = new Set([
@@ -191,6 +191,7 @@ export function detectColumnTypes(matrix: string[][]): SmartParseResult {
     let phoneScore = 0;
     let webScore = 0;
     let igScore = 0;
+    let googleScore = 0;
     let cityScore = 0;
     let bizScore = 0;
     let ownerScore = 0;
@@ -226,6 +227,16 @@ export function detectColumnTypes(matrix: string[][]): SmartParseResult {
       headerName === 'ig'
     ) {
       igScore += 80;
+    }
+
+    if (
+      headerName.includes('google') ||
+      headerName.includes('maps') ||
+      headerName.includes('gmb') ||
+      headerName.includes('gbp') ||
+      headerName.includes('location link')
+    ) {
+      googleScore += 80;
     }
 
     if (
@@ -320,6 +331,16 @@ export function detectColumnTypes(matrix: string[][]): SmartParseResult {
         igScore += 35;
       }
 
+      // 3.5. Google Maps / GBP checking
+      if (
+        lower.includes('google.com/maps') ||
+        lower.includes('maps.google') ||
+        lower.includes('g.page') ||
+        lower.includes('maps.app.goo.gl')
+      ) {
+        googleScore += 50;
+      }
+
       // 4. City checking
       if (COMMON_INDIAN_CITIES.has(lower)) {
         cityScore += 40;
@@ -370,6 +391,7 @@ export function detectColumnTypes(matrix: string[][]): SmartParseResult {
       { field: 'phone', score: phoneScore },
       { field: 'website', score: webScore },
       { field: 'instagram', score: igScore },
+      { field: 'googleProfile', score: googleScore },
       { field: 'city', score: cityScore },
       { field: 'industry', score: indScore },
       { field: 'ownerName', score: ownerScore },
@@ -396,6 +418,9 @@ export function detectColumnTypes(matrix: string[][]): SmartParseResult {
       } else if (top.field === 'instagram' && !assignedTypes.has('instagram')) {
         fieldAssigned = 'instagram';
         assignedTypes.add('instagram');
+      } else if (top.field === 'googleProfile' && !assignedTypes.has('googleProfile')) {
+        fieldAssigned = 'googleProfile';
+        assignedTypes.add('googleProfile');
       } else if (top.field === 'city' && !assignedTypes.has('city')) {
         fieldAssigned = 'city';
         assignedTypes.add('city');

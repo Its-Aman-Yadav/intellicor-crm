@@ -899,24 +899,6 @@ export default function CRMApp() {
           )}
         </main>
 
-        {/* SIMPLE BULK UPLOAD MODAL */}
-        <SimpleBulkUploadModal
-          isOpen={isSimpleUploadOpen}
-          onClose={() => setIsSimpleUploadOpen(false)}
-          onImportLeads={handleBulkImportLeads}
-          activeRep={activeRep}
-          initialCategory={uploadCategory || 'Airbnb'}
-          existingCategories={existingCategories}
-        />
-
-        {/* DAILY TARGET MODAL */}
-        <DailyTargetModal
-          isOpen={isTargetModalOpen}
-          onClose={() => setIsTargetModalOpen(false)}
-          currentTarget={dailyTarget}
-          onSaveTarget={handleSaveTarget}
-        />
-
         {/* Lead View/Edit Modal if opened */}
         <LeadModal
           lead={editingLead}

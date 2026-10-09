@@ -4,68 +4,411 @@ import { cleanPhoneNumber } from './whatsapp';
 import { detectColumnTypes, DetectedField, splitRowIntoCells } from './smartParser';
 import { calculateLeadScore, determineLeadPriority } from './scoring';
 
+export interface ColumnStat {
+  index: number;
+  header: string;
+  nonEmptyCount: number;
+  totalRows: number;
+  fillPercentage: number;
+  sampleValues: string[];
+  suggestedField: DetectedField;
+  confidence: 'High' | 'Medium' | 'Low';
+}
+
 export interface ParsedSheetResult {
   sheetName: string;
+  availableSheets: string[];
   totalRows: number;
+  totalColumns: number;
   headers: string[];
   sampleRows: string[][];
+  dataRows: string[][];
   rawMatrix: string[][];
   detectedMappings: DetectedField[];
   hasHeader: boolean;
+  headerRowIndex: number;
+  columnStats: ColumnStat[];
+  workbookBuffer?: ArrayBuffer;
 }
 
 /**
- * Reads an Excel file (.xlsx, .xls) or CSV / TSV file and converts to a 2D string matrix
+ * Normalizes raw rows from sheet_to_json so every row has identical length (maxCols)
+ * and empty trailing cells aren't truncated.
  */
-export async function readSpreadsheetFile(file: File): Promise<ParsedSheetResult> {
+function normalizeRawRows(rawRows: unknown[][]): string[][] {
+  const maxCols = Math.max(
+    ...rawRows.map((r) => (Array.isArray(r) ? r.length : 0)),
+    1
+  );
+
+  return rawRows
+    .map((row) => {
+      const arr = Array.isArray(row) ? row : [];
+      const normalized: string[] = [];
+      for (let c = 0; c < maxCols; c++) {
+        const cell = arr[c];
+        if (cell === null || cell === undefined) {
+          normalized.push('');
+        } else {
+          normalized.push(String(cell).trim());
+        }
+      }
+      return normalized;
+    })
+    .filter((row) => row.some((cell) => cell.length > 0));
+}
+
+/**
+ * Ensures worksheet['!ref'] encompasses all existing cells in the sheet.
+ * Many spreadsheet generators/exporters write an outdated or truncated `dimension`
+ * tag (e.g. A1:N100 = 14 columns) even when there are 30+ columns (O, P, Q ... AD).
+ * SheetJS's sheet_to_json strictly bounds its iteration to `!ref`, which drops
+ * all columns beyond column 14. This function scans all cell coordinates and properties
+ * to dynamically expand !ref so 100% of the columns are read.
+ */
+export function ensureFullWorksheetRange(worksheet: XLSX.WorkSheet): void {
+  if (!worksheet) return;
+
+  let minC = 0;
+  let minR = 0;
+  let maxC = -1;
+  let maxR = -1;
+
+  // 1. Initial bounds from worksheet['!ref'] if available
+  if (worksheet['!ref']) {
+    try {
+      const decoded = XLSX.utils.decode_range(worksheet['!ref']);
+      minC = Math.min(minC, decoded.s.c);
+      minR = Math.min(minR, decoded.s.r);
+      maxC = Math.max(maxC, decoded.e.c);
+      maxR = Math.max(maxR, decoded.e.r);
+    } catch {
+      // ignore malformed !ref
+    }
+  }
+
+  // 2. Check '!fullref' property if present
+  const fullref = (worksheet as Record<string, unknown>)['!fullref'];
+  if (typeof fullref === 'string') {
+    try {
+      const decoded = XLSX.utils.decode_range(fullref);
+      minC = Math.min(minC, decoded.s.c);
+      minR = Math.min(minR, decoded.s.r);
+      maxC = Math.max(maxC, decoded.e.c);
+      maxR = Math.max(maxR, decoded.e.r);
+    } catch {
+      // ignore
+    }
+  }
+
+  // 3. Check column formatting array '!cols' length if present
+  const cols = (worksheet as Record<string, unknown>)['!cols'];
+  if (Array.isArray(cols) && cols.length > 0) {
+    maxC = Math.max(maxC, cols.length - 1);
+  }
+
+  // 4. Check autofilter range if present
+  const autofilter = (worksheet as Record<string, unknown>)['!autofilter'] as { ref?: string } | undefined;
+  if (autofilter && typeof autofilter.ref === 'string') {
+    try {
+      const decoded = XLSX.utils.decode_range(autofilter.ref);
+      maxC = Math.max(maxC, decoded.e.c);
+      maxR = Math.max(maxR, decoded.e.r);
+    } catch {
+      // ignore
+    }
+  }
+
+  // 5. Check dense mode array '!data' if present
+  const data = (worksheet as Record<string, unknown>)['!data'];
+  if (Array.isArray(data)) {
+    for (let r = 0; r < data.length; r++) {
+      if (Array.isArray(data[r])) {
+        for (let c = 0; c < data[r].length; c++) {
+          if (data[r][c] !== undefined && data[r][c] !== null) {
+            if (c > maxC) maxC = c;
+            if (r > maxR) maxR = r;
+          }
+        }
+      }
+    }
+  }
+
+  // 6. Scan ALL cell keys in the worksheet object (e.g. 'A1', 'AD10', etc.)
+  for (const key of Object.keys(worksheet)) {
+    if (key.charCodeAt(0) === 33) continue; // skip '!ref', '!cols', '!rows', '!merges', etc.
+    try {
+      const cell = XLSX.utils.decode_cell(key);
+      if (cell.c > maxC) maxC = cell.c;
+      if (cell.r > maxR) maxR = cell.r;
+      if (cell.c < minC) minC = cell.c;
+      if (cell.r < minR) minR = cell.r;
+    } catch {
+      // key was not a standard cell coordinate
+    }
+  }
+
+  // 7. Update !ref to encompass the true maximum dimensions
+  if (maxC >= 0 && maxR >= 0) {
+    worksheet['!ref'] = XLSX.utils.encode_range({
+      s: { c: minC === Infinity ? 0 : minC, r: minR === Infinity ? 0 : minR },
+      e: { c: maxC, r: maxR },
+    });
+  }
+}
+
+/**
+ * Builds ParsedSheetResult with accurate column headers, statistics, and mappings
+ */
+export function buildParsedSheetResult(params: {
+  sheetName: string;
+  availableSheets: string[];
+  matrix: string[][];
+  headerRowIndex?: number;
+  workbookBuffer?: ArrayBuffer;
+}): ParsedSheetResult {
+  const { sheetName, availableSheets, matrix, workbookBuffer } = params;
+
+  if (matrix.length === 0) {
+    throw new Error('The selected sheet contains no readable data rows.');
+  }
+
+  const numCols = Math.max(...matrix.map((r) => r.length), 1);
+
+  // Determine header row index
+  let headerRowIndex: number;
+  let hasHeader: boolean;
+
+  if (params.headerRowIndex !== undefined) {
+    headerRowIndex = params.headerRowIndex;
+    hasHeader = headerRowIndex >= 0;
+  } else {
+    // Auto-detect header row
+    const autoDetect = detectColumnTypes(matrix);
+    if (autoDetect.hasHeader) {
+      headerRowIndex = 0;
+      hasHeader = true;
+    } else {
+      // Check if row 1 might be the header if row 0 was a title or banner
+      if (matrix.length > 2) {
+        const row1Detection = detectColumnTypes(matrix.slice(1));
+        if (row1Detection.hasHeader) {
+          headerRowIndex = 1;
+          hasHeader = true;
+        } else {
+          headerRowIndex = -1;
+          hasHeader = false;
+        }
+      } else {
+        headerRowIndex = -1;
+        hasHeader = false;
+      }
+    }
+  }
+
+  // Build headers & data rows
+  let headers: string[];
+  let dataRows: string[][];
+
+  if (hasHeader && headerRowIndex >= 0 && headerRowIndex < matrix.length) {
+    const rawHeaderRow = matrix[headerRowIndex] || [];
+    headers = Array.from({ length: numCols }, (_, i) => {
+      const text = (rawHeaderRow[i] || '').trim();
+      return text || `Column ${i + 1}`;
+    });
+    dataRows = matrix.slice(headerRowIndex + 1);
+  } else {
+    headers = Array.from({ length: numCols }, (_, i) => `Column ${i + 1}`);
+    dataRows = matrix;
+    hasHeader = false;
+    headerRowIndex = -1;
+  }
+
+  // Detect column types on the active header + data rows
+  const matrixForDetection = hasHeader ? [headers, ...dataRows] : dataRows;
+  const detection = detectColumnTypes(matrixForDetection);
+
+  // Build column statistics for user review
+  const columnStats: ColumnStat[] = [];
+  for (let c = 0; c < numCols; c++) {
+    const colHeader = headers[c] || `Column ${c + 1}`;
+    let nonEmptyCount = 0;
+    const sampleSet = new Set<string>();
+
+    for (let r = 0; r < dataRows.length; r++) {
+      const val = (dataRows[r][c] || '').trim();
+      if (val) {
+        nonEmptyCount++;
+        if (sampleSet.size < 5) {
+          sampleSet.add(val);
+        }
+      }
+    }
+
+    const fillPercentage = Math.round(
+      (nonEmptyCount / Math.max(dataRows.length, 1)) * 100
+    );
+
+    const analysisItem = detection.analysis.find((a) => a.index === c);
+    const suggestedField = detection.mappings[c] || 'skip';
+    const confidence = analysisItem?.confidence || 'Medium';
+
+    columnStats.push({
+      index: c,
+      header: colHeader,
+      nonEmptyCount,
+      totalRows: dataRows.length,
+      fillPercentage,
+      sampleValues: Array.from(sampleSet),
+      suggestedField,
+      confidence,
+    });
+  }
+
+  return {
+    sheetName,
+    availableSheets: availableSheets.length > 0 ? availableSheets : [sheetName],
+    totalRows: dataRows.length,
+    totalColumns: numCols,
+    headers,
+    sampleRows: dataRows.slice(0, 25),
+    dataRows,
+    rawMatrix: matrix,
+    detectedMappings: detection.mappings,
+    hasHeader,
+    headerRowIndex,
+    columnStats,
+    workbookBuffer,
+  };
+}
+
+/**
+ * Reads an Excel file (.xlsx, .xls) or CSV / TSV file and converts to a full 2D matrix
+ */
+export async function readSpreadsheetFile(
+  file: File,
+  options?: { selectedSheet?: string; headerRowIndex?: number }
+): Promise<ParsedSheetResult> {
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(buffer, { type: 'array' });
-  const sheetName = workbook.SheetNames[0] || 'Sheet1';
-  const worksheet = workbook.Sheets[sheetName];
+  const availableSheets = workbook.SheetNames || ['Sheet1'];
 
-  // Convert sheet to 2D array of rows
+  // Expand bounds on ALL sheets in the workbook to prevent 14-column truncation
+  for (const sName of availableSheets) {
+    if (workbook.Sheets[sName]) {
+      ensureFullWorksheetRange(workbook.Sheets[sName]);
+    }
+  }
+
+  let chosenSheet = options?.selectedSheet || availableSheets[0] || 'Sheet1';
+  if (!availableSheets.includes(chosenSheet)) {
+    chosenSheet = availableSheets[0] || 'Sheet1';
+  }
+
+  const worksheet = workbook.Sheets[chosenSheet];
+  if (!worksheet) {
+    throw new Error(`Sheet "${chosenSheet}" was empty or not found in workbook.`);
+  }
+
+  ensureFullWorksheetRange(worksheet);
+
   const rawRows: unknown[][] = XLSX.utils.sheet_to_json(worksheet, {
     header: 1,
     defval: '',
     blankrows: false,
   });
 
-  const matrix: string[][] = rawRows
-    .map((row) =>
-      row.map((cell) => {
-        if (cell === null || cell === undefined) return '';
-        return String(cell).trim();
-      })
-    )
-    .filter((row) => row.some((cell) => cell.length > 0));
+  let matrix = normalizeRawRows(rawRows);
 
-  if (matrix.length === 0) {
-    throw new Error('The uploaded file contains no readable data rows.');
+  // If this was a text-based sheet (.csv, .tsv, .txt), also verify against raw text parsing
+  const lowerFileName = file.name.toLowerCase();
+  if (lowerFileName.endsWith('.csv') || lowerFileName.endsWith('.tsv') || lowerFileName.endsWith('.txt')) {
+    try {
+      const rawText = await file.text();
+      const textLines = rawText
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0);
+      if (textLines.length > 0) {
+        const textRawRows = textLines.map((line) => splitRowIntoCells(line));
+        const textMatrix = normalizeRawRows(textRawRows);
+        const textCols = textMatrix.length > 0 ? textMatrix[0].length : 0;
+        const currentCols = matrix.length > 0 ? matrix[0].length : 0;
+        if (textCols > currentCols) {
+          matrix = textMatrix;
+        }
+      }
+    } catch {
+      // ignore text fallback error
+    }
   }
 
-  // Detect column mappings
-  const detection = detectColumnTypes(matrix);
-  const headers = detection.hasHeader
-    ? matrix[0]
-    : matrix[0].map((_, i) => `Column ${i + 1}`);
+  return buildParsedSheetResult({
+    sheetName: chosenSheet,
+    availableSheets,
+    matrix,
+    headerRowIndex: options?.headerRowIndex,
+    workbookBuffer: buffer,
+  });
+}
 
-  const sampleRows = (detection.hasHeader ? matrix.slice(1, 6) : matrix.slice(0, 5));
+/**
+ * Switches to another sheet tab within the cached workbook
+ */
+export function switchParsedSheet(
+  buffer: ArrayBuffer,
+  sheetName: string,
+  headerRowIndex?: number
+): ParsedSheetResult {
+  const workbook = XLSX.read(buffer, { type: 'array' });
+  const availableSheets = workbook.SheetNames || [sheetName];
+  const worksheet = workbook.Sheets[sheetName];
+  if (!worksheet) {
+    throw new Error(`Sheet "${sheetName}" not found in workbook.`);
+  }
 
-  return {
+  ensureFullWorksheetRange(worksheet);
+
+  const rawRows: unknown[][] = XLSX.utils.sheet_to_json(worksheet, {
+    header: 1,
+    defval: '',
+    blankrows: false,
+  });
+
+  const matrix = normalizeRawRows(rawRows);
+
+  return buildParsedSheetResult({
     sheetName,
-    totalRows: detection.hasHeader ? matrix.length - 1 : matrix.length,
-    headers,
-    sampleRows,
-    rawMatrix: matrix,
-    detectedMappings: detection.mappings,
-    hasHeader: detection.hasHeader,
-  };
+    availableSheets,
+    matrix,
+    headerRowIndex,
+    workbookBuffer: buffer,
+  });
+}
+
+/**
+ * Re-parses an existing sheet with a user-selected header row index
+ */
+export function reparseWithHeaderRow(
+  parsed: ParsedSheetResult,
+  newHeaderRowIndex: number
+): ParsedSheetResult {
+  return buildParsedSheetResult({
+    sheetName: parsed.sheetName,
+    availableSheets: parsed.availableSheets,
+    matrix: parsed.rawMatrix,
+    headerRowIndex: newHeaderRowIndex,
+    workbookBuffer: parsed.workbookBuffer,
+  });
 }
 
 /**
  * Parses raw text copied and pasted from Excel or Google Sheets
  */
-export function parsePastedSpreadsheetText(text: string): ParsedSheetResult {
+export function parsePastedSpreadsheetText(
+  text: string,
+  headerRowIndex?: number
+): ParsedSheetResult {
   const lines = text
     .split(/\r?\n/)
     .map((l) => l.trim())
@@ -75,27 +418,21 @@ export function parsePastedSpreadsheetText(text: string): ParsedSheetResult {
     throw new Error('No text to parse.');
   }
 
-  const matrix = lines.map((line) => splitRowIntoCells(line));
-  const detection = detectColumnTypes(matrix);
-  const headers = detection.hasHeader
-    ? matrix[0]
-    : matrix[0].map((_, i) => `Column ${i + 1}`);
-  const sampleRows = detection.hasHeader ? matrix.slice(1, 6) : matrix.slice(0, 5);
+  const rawRows = lines.map((line) => splitRowIntoCells(line));
+  const matrix = normalizeRawRows(rawRows);
 
-  return {
-    sheetName: 'Pasted Data',
-    totalRows: detection.hasHeader ? matrix.length - 1 : matrix.length,
-    headers,
-    sampleRows,
-    rawMatrix: matrix,
-    detectedMappings: detection.mappings,
-    hasHeader: detection.hasHeader,
-  };
+  return buildParsedSheetResult({
+    sheetName: 'Pasted Rows',
+    availableSheets: ['Pasted Rows'],
+    matrix,
+    headerRowIndex,
+  });
 }
 
 export interface ConvertOptions {
   mappings: DetectedField[];
   hasHeader: boolean;
+  headerRowIndex?: number;
   defaultCity?: string;
   defaultIndustry?: string;
   assignedRep?: string;
@@ -114,6 +451,7 @@ export function convertMatrixToLeads(
   const {
     mappings,
     hasHeader,
+    headerRowIndex,
     defaultCity = 'Local Area',
     defaultIndustry = 'Other Local Business',
     assignedRep = 'Aman',
@@ -122,7 +460,17 @@ export function convertMatrixToLeads(
     batchId,
   } = options;
 
-  const dataRows = hasHeader ? matrix.slice(1) : matrix;
+  let dataRows: string[][];
+  if (headerRowIndex !== undefined) {
+    if (headerRowIndex === -1) {
+      dataRows = matrix;
+    } else {
+      dataRows = matrix.slice(headerRowIndex + 1);
+    }
+  } else {
+    dataRows = hasHeader ? matrix.slice(1) : matrix;
+  }
+
   const nowIso = new Date().toISOString();
   const leads: Lead[] = [];
 
@@ -133,6 +481,7 @@ export function convertMatrixToLeads(
     let city = defaultCity;
     let industry = defaultIndustry;
     let website = '';
+    let googleProfile = '';
     let instagram = '';
     let notes = '';
 
@@ -160,6 +509,9 @@ export function convertMatrixToLeads(
         case 'website':
           website = val;
           break;
+        case 'googleProfile':
+          googleProfile = val;
+          break;
         case 'instagram':
           instagram = val;
           break;
@@ -182,7 +534,7 @@ export function convertMatrixToLeads(
     const defaultSignals: ScoringSignals = {
       noWebsite: !website,
       badWebsite: false,
-      poorGoogleProfile: true,
+      poorGoogleProfile: !googleProfile,
       inactiveInstagram: !instagram,
       goodBusinessReputation: true,
       clearlySpendsOnMarketing: false,
@@ -203,7 +555,7 @@ export function convertMatrixToLeads(
       sheetName: sheetName.trim() || 'Uploaded Sheet',
       batchId: batchId || `batch-${Date.now()}`,
       website: website || '',
-      googleProfile: '',
+      googleProfile: googleProfile || '',
       instagram: instagram || '',
       signals: defaultSignals,
       score,
