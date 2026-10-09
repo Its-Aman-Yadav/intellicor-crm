@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useTransition, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useTransition, useMemo } from 'react';
 import { Lead } from '@/types/crm';
 import {
   readSpreadsheetFile,
@@ -99,7 +99,6 @@ export default function SimpleBulkUploadModal({
     }
   }, [initialCategory]);
 
-  if (!isOpen) return null;
 
   // Helper to initialize mappings with smart suggestions
   const applySmartMappings = (res: ParsedSheetResult) => {
@@ -386,6 +385,8 @@ export default function SimpleBulkUploadModal({
     return letter;
   };
 
+  if (!isOpen) return null;
+
   return (
     <div className="upload-modal-backdrop" onClick={onClose}>
       <div
@@ -498,8 +499,11 @@ export default function SimpleBulkUploadModal({
                     accept=".xlsx,.xls,.csv,.tsv"
                     style={{ display: 'none' }}
                   />
-                  <label
-                    htmlFor="bulk-file-upload"
+                  <div
+                    onClick={() => {
+                      console.log('Upload Excel / CSV dropzone clicked');
+                      fileInputRef.current?.click();
+                    }}
                     className={`upload-dropzone ${isDragging ? 'is-dragging' : ''}`}
                     onDragOver={handleDragOver}
                     onDragLeave={handleDragLeave}
@@ -523,7 +527,7 @@ export default function SimpleBulkUploadModal({
                     <span className="file-types-tag">
                       Supports .xlsx, .xls, .csv, and tab-separated sheets
                     </span>
-                  </label>
+                  </div>
                 </>
               ) : (
                 /* Paste Box */

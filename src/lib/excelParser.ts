@@ -1,7 +1,7 @@
 import * as XLSX from 'xlsx';
 import { Lead, ScoringSignals } from '@/types/crm';
 import { cleanPhoneNumber } from './whatsapp';
-import { detectColumnTypes, DetectedField, splitRowIntoCells } from './smartParser';
+import { detectColumnTypes, DetectedField, splitRowIntoCells, parseCSVText } from './smartParser';
 import { calculateLeadScore, determineLeadPriority } from './scoring';
 
 export interface ColumnStat {
@@ -362,18 +362,11 @@ export async function readSpreadsheetFile(
   if (lowerFileName.endsWith('.csv') || lowerFileName.endsWith('.tsv') || lowerFileName.endsWith('.txt')) {
     try {
       const rawText = new TextDecoder('utf-8').decode(buffer);
-      const textLines = rawText
-        .split(/\r?\n/)
-        .map((l) => l.trim())
-        .filter((l) => l.length > 0);
-      if (textLines.length > 0) {
-        const textRawRows = textLines.map((line) => splitRowIntoCells(line));
-        const textMatrix = normalizeRawRows(textRawRows);
-        const textCols = textMatrix.length > 0 ? textMatrix[0].length : 0;
-        const currentCols = matrix.length > 0 ? matrix[0].length : 0;
-        if (textCols > currentCols) {
-          matrix = textMatrix;
-        }
+      const textMatrix = normalizeRawRows(parseCSVText(rawText));
+      const textCols = textMatrix.length > 0 ? textMatrix[0].length : 0;
+      const currentCols = matrix.length > 0 ? matrix[0].length : 0;
+      if (textCols > currentCols) {
+        matrix = textMatrix;
       }
     } catch {
       // ignore text fallback error
@@ -455,7 +448,7 @@ export function parsePastedSpreadsheetText(
     throw new Error('No text to parse.');
   }
 
-  const rawRows = lines.map((line) => splitRowIntoCells(line));
+  const rawRows = parseCSVText(text);
   const matrix = normalizeRawRows(rawRows);
 
   return buildParsedSheetResult({

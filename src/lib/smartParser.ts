@@ -132,6 +132,62 @@ export function splitRowIntoCells(line: string): string[] {
 }
 
 /**
+ * Robustly parses CSV text into a matrix of cells, respecting quotes, newlines, and
+ * auto-detecting common delimiters (, ; \t |).
+ */
+export function parseCSVText(text: string): string[][] {
+  const result: string[][] = [];
+  let currentRow: string[] = [];
+  let currentCell = '';
+  let inQuotes = false;
+
+  let delimiter = ',';
+  const firstLine = text.split('\n')[0] || '';
+  const commaCount = (firstLine.match(/,/g) || []).length;
+  const semiCount = (firstLine.match(/;/g) || []).length;
+  const tabCount = (firstLine.match(/\t/g) || []).length;
+  const pipeCount = (firstLine.match(/\|/g) || []).length;
+
+  if (tabCount > commaCount && tabCount > semiCount && tabCount > pipeCount) delimiter = '\t';
+  else if (semiCount > commaCount && semiCount > pipeCount) delimiter = ';';
+  else if (pipeCount > commaCount && pipeCount > semiCount) delimiter = '|';
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') {
+      if (inQuotes && text[i + 1] === '"') {
+        currentCell += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === delimiter && !inQuotes) {
+      currentRow.push(currentCell.trim());
+      currentCell = '';
+    } else if ((ch === '\n' || (ch === '\r' && text[i + 1] === '\n')) && !inQuotes) {
+      if (ch === '\r') i++; // skip \n
+      currentRow.push(currentCell.trim());
+      if (currentRow.some((c) => c.length > 0)) {
+        result.push(currentRow);
+      }
+      currentRow = [];
+      currentCell = '';
+    } else {
+      currentCell += ch;
+    }
+  }
+
+  if (currentCell || currentRow.length > 0) {
+    currentRow.push(currentCell.trim());
+    if (currentRow.some((c) => c.length > 0)) {
+      result.push(currentRow);
+    }
+  }
+
+  return result;
+}
+
+/**
  * Intelligent detector that automatically determines column types
  * by analyzing header strings AND actual data patterns
  */

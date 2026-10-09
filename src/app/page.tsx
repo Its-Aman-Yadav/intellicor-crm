@@ -574,9 +574,9 @@ export default function CRMApp() {
     syncAllLeadsToFirestore(sample).catch(console.error);
   };
 
-  const handleOpenUploadModal = (category?: string) => {
-    setUploadCategory(category);
-    fileInputRef.current?.click();
+  const handleOpenUploadModal = (category?: any) => {
+    setUploadCategory(typeof category === 'string' ? category : undefined);
+    setIsSimpleUploadOpen(true);
   };
 
   const handleGlobalFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -921,6 +921,21 @@ export default function CRMApp() {
           onDelete={handleDeleteLead}
           templates={templates}
           activeRep={activeRep}
+        />
+
+        {/* MODAL: Simple Bulk Upload Modal (Simple Mode) */}
+        <SimpleBulkUploadModal
+          isOpen={isSimpleUploadOpen}
+          onClose={() => {
+            setIsSimpleUploadOpen(false);
+            setInitialFileForModal(null);
+          }}
+          onImportLeads={handleBulkImportLeads}
+          activeRep={activeRep}
+          initialCategory={uploadCategory || 'Airbnb'}
+          existingCategories={existingCategories}
+          initialFile={initialFileForModal}
+          onClearInitialFile={() => setInitialFileForModal(null)}
         />
 
         <style jsx>{`
